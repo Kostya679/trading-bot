@@ -168,7 +168,6 @@ def compute_signal(df):
     }}
 
 # -------------------- МЕНЮ И КНОПКИ --------------------
-# Списки активов (как в Pocket Option)
 CURRENCIES = [
     "AUD/USD OTC", "EUR/USD OTC", "EUR/RUB OTC", "GBP/JPY OTC",
     "USD/CAD OTC", "USD/CHF OTC", "USD/JPY OTC", "GBP/USD OTC"
@@ -181,7 +180,6 @@ INDICES = ["S&P 500 OTC", "NASDAQ OTC", "Dow Jones OTC", "Nikkei 225 OTC"]
 TIMEFRAMES = ["5s", "10s", "15s", "30s", "1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "4h"]
 DURATIONS = ["5s", "10s", "15s", "30s", "1m", "2m", "3m", "4m", "5m", "6m", "8m", "10m", "15m", "20m", "25m", "30m", "45m", "1h", "2h", "3h", "4h"]
 
-# Флаги (примеры URL-адресов — можно заменить на свои)
 FLAG_URLS = {
     "AUD/USD OTC": "https://flagcdn.com/au.svg",
     "EUR/USD OTC": "https://flagcdn.com/eu.svg",
@@ -191,10 +189,8 @@ FLAG_URLS = {
     "USD/CHF OTC": "https://flagcdn.com/ch.svg",
     "BTC/USD OTC": "https://cryptologos.cc/logos/bitcoin-btc-logo.png",
     "ETH/USD OTC": "https://cryptologos.cc/logos/ethereum-eth-logo.png",
-    # добавить остальные по необходимости
 }
 
-# Функция для создания клавиатуры с разбивкой по столбцам
 def build_keyboard(items, back=False, back_data=None, cols=2):
     keyboard = []
     row = []
@@ -211,7 +207,6 @@ def build_keyboard(items, back=False, back_data=None, cols=2):
 
 # -------------------- ОБРАБОТЧИКИ КОМАНД --------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Приветственное сообщение
     text = (
         "🚀 *Добро пожаловать в торгового бота-ассистента!*\n\n"
         "Я анализирую рынок и даю сигналы по активам из Pocket Option.\n"
@@ -224,7 +219,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def go(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    # Главное меню разделов
     keyboard = [
         [InlineKeyboardButton("💱 Валюты", callback_data="currencies")],
         [InlineKeyboardButton("🪙 Криптовалюты", callback_data="crypto")],
@@ -264,17 +258,14 @@ async def asset_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     asset = query.data
     context.user_data['asset'] = asset
-    # Показываем изображение (флаг/лого) и выбор таймфрейма
     flag_url = FLAG_URLS.get(asset, "https://flagcdn.com/unknown.svg")
     text = f"*{asset}*\n\nВыберите таймфрейм для анализа:"
     keyboard = build_keyboard(TIMEFRAMES, back=True, back_data="back_to_section")
-    # Отправляем с фото (если есть URL)
     try:
         await query.message.delete()
         await update.effective_chat.send_photo(photo=flag_url, caption=text, parse_mode='Markdown', reply_markup=keyboard)
     except:
         await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
-    # Сохраняем ID сообщения для последующего удаления при "назад"
     context.user_data['menu_msg_id'] = query.message.message_id if not query.message.photo else None
 
 async def timeframe_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -296,17 +287,14 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not asset or not timeframe:
         await query.edit_message_text("Ошибка: не выбраны параметры. Начните заново /start")
         return
-    # Генерируем сигнал
     await query.edit_message_text("⏳ Анализирую рынок...")
     try:
-        # Для OTC активов убираем суффикс OTC для API запроса
         clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
         df = get_market_data(clean_asset, timeframe, limit=100)
         signal_data = compute_signal(df)
         signal = signal_data['signal']
         reason = signal_data['reason']
         price = signal_data['indicators'].get('Last_Close', 0)
-        # Формируем сообщение с результатом
         emoji = '🟢' if signal == 'LONG' else '🔴' if signal == 'SHORT' else '⚪'
         msg = (
             f"{emoji} *СИГНАЛ: {signal}*\n"
@@ -327,7 +315,6 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    # Повторяем сигнал с теми же параметрами
     asset = context.user_data.get('asset')
     timeframe = context.user_data.get('timeframe')
     duration = context.user_data.get('duration')
@@ -364,12 +351,9 @@ async def back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     back_to = query.data
     if back_to == "back_to_section":
-        # Возврат к списку активов в текущем разделе
-        # Нужно определить, из какого раздела пришли. Можно сохранить в user_data.
         section = context.user_data.get('section', 'currencies')
         await section_handler(update, context)
     elif back_to == "back_to_asset":
-        # Возврат к выбору таймфрейма (к активу)
         asset = context.user_data.get('asset')
         if asset:
             await asset_selected(update, context)
@@ -378,7 +362,6 @@ async def back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif back_to == "go":
         await go(update, context)
     elif back_to == "home":
-        # Возврат в главное меню (удаляем все сообщения бота)
         await go(update, context)
     else:
         await go(update, context)
@@ -396,16 +379,19 @@ def main():
         return "Bot is running!"
 
     def run_flask():
-        port = int(os.environ.get('PORT', 10000))  # Render часто использует 10000
-        logger.info(f"Попытка запустить Flask на порту {port}")
-        flask_app.run(host='0.0.0.0', port=port)
+        try:
+            # Используем порт из переменной PORT или 10000 по умолчанию
+            port = int(os.environ.get('PORT', 10000))
+            logger.info(f"Попытка запустить Flask на порту {port}")
+            flask_app.run(host='0.0.0.0', port=port)
+        except Exception as e:
+            logger.error(f"Ошибка при запуске Flask: {e}")
 
     thread = threading.Thread(target=run_flask)
     thread.daemon = True
     thread.start()
     logger.info("Flask-поток запущен, ждём старта...")
     
-    # Остальной код бота...
     # --- Теперь запускаем бота ---
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
@@ -419,3 +405,6 @@ def main():
     app.add_error_handler(error_handler)
     logger.info("Бот запущен!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+if __name__ == "__main__":
+    main()
