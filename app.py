@@ -9,6 +9,8 @@ import yfinance as yf
 import pandas as pd
 import ta
 import asyncio
+from flask import Flask
+import threading
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -386,6 +388,25 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # -------------------- ЗАПУСК БОТА --------------------
 def main():
+    # --- Запускаем Flask-сервер в отдельном потоке ---
+    flask_app = Flask(__name__)
+
+    @flask_app.route('/')
+    def home():
+        return "Bot is running!"
+
+    def run_flask():
+        port = int(os.environ.get('PORT', 10000))  # Render часто использует 10000
+        logger.info(f"Попытка запустить Flask на порту {port}")
+        flask_app.run(host='0.0.0.0', port=port)
+
+    thread = threading.Thread(target=run_flask)
+    thread.daemon = True
+    thread.start()
+    logger.info("Flask-поток запущен, ждём старта...")
+    
+    # Остальной код бота...
+    # --- Теперь запускаем бота ---
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(go, pattern="^go$"))
@@ -398,6 +419,3 @@ def main():
     app.add_error_handler(error_handler)
     logger.info("Бот запущен!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
-
-if __name__ == "__main__":
-    main()
