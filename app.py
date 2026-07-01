@@ -363,21 +363,38 @@ async def back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     back_to = query.data
     if back_to == "back_to_section":
-        section = context.user_data.get('section', 'currencies')
-        await section_handler(update, context)
+        # Удаляем текущее сообщение (это фото)
+        try:
+            await query.message.delete()
+        except:
+            pass
+        # Отправляем новое сообщение с выбором раздела
+        await go(update, context)
     elif back_to == "back_to_asset":
+        # Возврат к выбору таймфрейма
         asset = context.user_data.get('asset')
         if asset:
+            # Удаляем текущее сообщение с выбором времени
+            try:
+                await query.message.delete()
+            except:
+                pass
+            # Показываем заново выбор таймфрейма
             await asset_selected(update, context)
         else:
             await go(update, context)
     elif back_to == "go":
         await go(update, context)
     elif back_to == "home":
+        # Возврат в главное меню (удаляем всё и начинаем заново)
+        try:
+            await query.message.delete()
+        except:
+            pass
         await go(update, context)
     else:
         await go(update, context)
-
+        
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Update {update} caused error {context.error}", exc_info=True)
 
