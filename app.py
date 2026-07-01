@@ -18,10 +18,7 @@ TWELVE_DATA_API_KEY = os.getenv("TWELVE_DATA_API_KEY", "")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не найден")
 
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # -------------------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДАННЫХ --------------------
@@ -186,17 +183,6 @@ INDICES = ["S&P 500 OTC", "NASDAQ OTC", "Dow Jones OTC", "Nikkei 225 OTC"]
 TIMEFRAMES = ["5s", "10s", "15s", "30s", "1m", "2m", "3m", "5m", "10m", "15m", "30m", "1h", "4h"]
 DURATIONS = ["5s", "10s", "15s", "30s", "1m", "2m", "3m", "4m", "5m", "6m", "8m", "10m", "15m", "20m", "25m", "30m", "45m", "1h", "2h", "3h", "4h"]
 
-FLAG_URLS = {
-    "AUD/USD OTC": "https://flagcdn.com/au.svg",
-    "EUR/USD OTC": "https://flagcdn.com/eu.svg",
-    "GBP/USD OTC": "https://flagcdn.com/gb.svg",
-    "USD/JPY OTC": "https://flagcdn.com/jp.svg",
-    "USD/CAD OTC": "https://flagcdn.com/ca.svg",
-    "USD/CHF OTC": "https://flagcdn.com/ch.svg",
-    "BTC/USD OTC": "https://cryptologos.cc/logos/bitcoin-btc-logo.png",
-    "ETH/USD OTC": "https://cryptologos.cc/logos/ethereum-eth-logo.png",
-}
-
 def build_keyboard(items, back=False, back_data=None, cols=2):
     keyboard = []
     row = []
@@ -236,12 +222,10 @@ async def go(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📈 Акции", callback_data="stocks")],
         [InlineKeyboardButton("📊 Индексы", callback_data="indices")]
     ]
-    # Удаляем текущее сообщение (если оно есть)
     try:
         await query.message.delete()
     except:
         pass
-    # Отправляем новое
     await update.effective_chat.send_message("Выберите раздел:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def section_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -264,25 +248,27 @@ async def section_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         items = INDICES
         title = "📊 Индексы"
     else:
-        await query.edit_message_text("Ошибка")
+        await update.effective_chat.send_message("Ошибка")
         return
     keyboard = build_keyboard(items, back=True, back_data="go")
-    await query.edit_message_text(f"{title} (выберите актив):", reply_markup=keyboard)
+    try:
+        await query.message.delete()
+    except:
+        pass
+    await update.effective_chat.send_message(f"{title} (выберите актив):", reply_markup=keyboard)
 
 async def asset_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     asset = query.data
     context.user_data['asset'] = asset
-    flag_url = FLAG_URLS.get(asset, "https://flagcdn.com/unknown.svg")
     text = f"*{asset}*\n\nВыберите таймфрейм для анализа:"
     keyboard = build_keyboard(TIMEFRAMES, back=True, back_data="back_to_section")
     try:
         await query.message.delete()
-        await update.effective_chat.send_photo(photo=flag_url, caption=text, parse_mode='Markdown', reply_markup=keyboard)
-    except Exception as e:
-        logger.warning(f"Не удалось отправить фото: {e}")
-        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+    except:
+        pass
+    await update.effective_chat.send_message(text, parse_mode='Markdown', reply_markup=keyboard)
 
 async def timeframe_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -291,12 +277,10 @@ async def timeframe_selected(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data['timeframe'] = tf
     text = f"✅ Таймфрейм *{tf}* выбран.\nТеперь выберите время сделки (экспирацию):"
     keyboard = build_keyboard(DURATIONS, back=True, back_data="back_to_asset")
-    # Удаляем текущее сообщение (это фото)
     try:
         await query.message.delete()
     except:
         pass
-    # Отправляем новое текстовое сообщение
     await update.effective_chat.send_message(text, parse_mode='Markdown', reply_markup=keyboard)
 
 async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -330,17 +314,15 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔄 Дай сигнал ещё раз", callback_data="resignal")],
             [InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]
         ]
-        # Удаляем предыдущее сообщение (с выбором времени)
         try:
             await query.message.delete()
         except:
             pass
-        # Отправляем результат
         await update.effective_chat.send_message(msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
     except Exception as e:
         logger.error(f"Ошибка в duration_selected: {e}", exc_info=True)
         await update.effective_chat.send_message(f"❌ Ошибка: {str(e)}")
-        
+
 async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -348,9 +330,9 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     timeframe = context.user_data.get('timeframe')
     duration = context.user_data.get('duration')
     if not asset or not timeframe or not duration:
-        await query.edit_message_text("Ошибка: данные потеряны. Начните заново /start")
+        await update.effective_chat.send_message("Ошибка: данные потеряны. Начните заново /start")
         return
-    await query.edit_message_text("⏳ Анализирую рынок...")
+    await update.effective_chat.send_message("⏳ Анализирую рынок...")
     try:
         clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
         df = get_market_data(clean_asset, timeframe, limit=100)
@@ -371,40 +353,38 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔄 Дай сигнал ещё раз", callback_data="resignal")],
             [InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]
         ]
-        await query.edit_message_text(msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+        try:
+            await query.message.delete()
+        except:
+            pass
+        await update.effective_chat.send_message(msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
     except Exception as e:
         logger.error(f"Ошибка в resignal: {e}", exc_info=True)
-        await query.edit_message_text(f"❌ Ошибка: {str(e)}")
+        await update.effective_chat.send_message(f"❌ Ошибка: {str(e)}")
 
 async def back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     back_to = query.data
     if back_to == "back_to_section":
-        # Удаляем текущее сообщение (это фото)
         try:
             await query.message.delete()
         except:
             pass
-        # Отправляем новое сообщение с выбором раздела
         await go(update, context)
     elif back_to == "back_to_asset":
-        # Возврат к выбору таймфрейма
         asset = context.user_data.get('asset')
         if asset:
-            # Удаляем текущее сообщение с выбором времени
             try:
                 await query.message.delete()
             except:
                 pass
-            # Показываем заново выбор таймфрейма
             await asset_selected(update, context)
         else:
             await go(update, context)
     elif back_to == "go":
         await go(update, context)
     elif back_to == "home":
-        # Возврат в главное меню (удаляем всё и начинаем заново)
         try:
             await query.message.delete()
         except:
