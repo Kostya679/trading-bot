@@ -236,7 +236,13 @@ async def go(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📈 Акции", callback_data="stocks")],
         [InlineKeyboardButton("📊 Индексы", callback_data="indices")]
     ]
-    await query.edit_message_text("Выберите раздел:", reply_markup=InlineKeyboardMarkup(keyboard))
+    # Удаляем текущее сообщение (если оно есть)
+    try:
+        await query.message.delete()
+    except:
+        pass
+    # Отправляем новое
+    await update.effective_chat.send_message("Выберите раздел:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def section_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -285,7 +291,13 @@ async def timeframe_selected(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data['timeframe'] = tf
     text = f"✅ Таймфрейм *{tf}* выбран.\nТеперь выберите время сделки (экспирацию):"
     keyboard = build_keyboard(DURATIONS, back=True, back_data="back_to_asset")
-    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+    # Удаляем текущее сообщение (это фото)
+    try:
+        await query.message.delete()
+    except:
+        pass
+    # Отправляем новое текстовое сообщение
+    await update.effective_chat.send_message(text, parse_mode='Markdown', reply_markup=keyboard)
 
 async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -295,9 +307,9 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asset = context.user_data.get('asset')
     timeframe = context.user_data.get('timeframe')
     if not asset or not timeframe:
-        await query.edit_message_text("Ошибка: не выбраны параметры. Начните заново /start")
+        await update.effective_chat.send_message("Ошибка: не выбраны параметры. Начните заново /start")
         return
-    await query.edit_message_text("⏳ Анализирую рынок...")
+    await update.effective_chat.send_message("⏳ Анализирую рынок...")
     try:
         clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
         df = get_market_data(clean_asset, timeframe, limit=100)
@@ -318,11 +330,17 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔄 Дай сигнал ещё раз", callback_data="resignal")],
             [InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]
         ]
-        await query.edit_message_text(msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+        # Удаляем предыдущее сообщение (с выбором времени)
+        try:
+            await query.message.delete()
+        except:
+            pass
+        # Отправляем результат
+        await update.effective_chat.send_message(msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
     except Exception as e:
         logger.error(f"Ошибка в duration_selected: {e}", exc_info=True)
-        await query.edit_message_text(f"❌ Ошибка: {str(e)}")
-
+        await update.effective_chat.send_message(f"❌ Ошибка: {str(e)}")
+        
 async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -394,7 +412,7 @@ async def back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await go(update, context)
     else:
         await go(update, context)
-        
+
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Update {update} caused error {context.error}", exc_info=True)
 
