@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 # -------------------- ПОЛУЧЕНИЕ ДАННЫХ (5 источников) --------------------
 def get_market_data(symbol, timeframe, limit=100):
+    logger.info(f"Попытка получить данные для символа {symbol} (таймфрейм {timeframe})")
     clean = symbol.upper().replace('=X', '').replace('_OTC', '').replace('USDT', '').replace('BUSD', '')
     variations = [clean, f"{clean}=X", f"{clean}_OTC", f"{clean}USDT", f"{clean}BUSD"]
     variations = list(dict.fromkeys(variations))
