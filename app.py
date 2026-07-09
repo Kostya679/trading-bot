@@ -342,15 +342,24 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     duration = query.data
     context.user_data['duration'] = duration
+
     asset = context.user_data.get('asset')
     timeframe = context.user_data.get('timeframe')
-    if not asset or not timeframe:
-        await update.effective_chat.send_message("Ошибка: не выбраны параметры. Начните заново /start")
+
+    # --- ПРОВЕРКА: если asset – служебная кнопка, игнорируем ---
+    if not asset or asset in ['back_to_asset', 'back_to_section', 'go', 'home'] or asset.startswith('back_'):
+        await update.effective_chat.send_message("⚠️ Ошибка: выберите актив заново через меню.")
+        return
+
+    if not timeframe:
+        await update.effective_chat.send_message("⚠️ Ошибка: таймфрейм не выбран.")
         return
 
     await update.effective_chat.send_message("⏳ Анализирую рынок...")
     try:
+        # Очищаем символ от OTC и слешей
         clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
+        logger.info(f"Пробую получить данные для {clean_asset}, таймфрейм {timeframe}")
         df = get_market_data(clean_asset, timeframe, limit=100)
         signal_data = compute_signal(df)
         signal = signal_data['signal']
