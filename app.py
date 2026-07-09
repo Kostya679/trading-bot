@@ -1,21 +1,20 @@
 import os
 import logging
+import time
 from datetime import datetime
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
-import requests
 import yfinance as yf
 import pandas as pd
 import ta
+import requests
 from flask import Flask
 import threading
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-TWELVE_DATA_API_KEY = os.getenv("TWELVE_DATA_API_KEY", "")
 ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY", "")
-FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")
 
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не задан")
@@ -23,60 +22,42 @@ if not BOT_TOKEN:
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# -------------------- ПОЛУЧЕНИЕ ДАННЫХ (5 источников) --------------------
+# -------------------- ПОЛУЧЕНИЕ ДАННЫХ --------------------
 def get_market_data(symbol, timeframe, limit=100):
-    logger.info(f"Попытка получить данные для символа {symbol} (таймфрейм {timeframe})")
+    """
+    Для криптовалют → Binance (символ + USDT)
+    Для валют и акций → Alpha Vantage (если есть ключ) или Yahoo Finance
+    """
     clean = symbol.upper().replace('=X', '').replace('_OTC', '').replace('USDT', '').replace('BUSD', '')
-    variations = [clean, f"{clean}=X", f"{clean}_OTC", f"{clean}USDT", f"{clean}BUSD"]
-    variations = list(dict.fromkeys(variations))
+    crypto_list = ['BTC', 'ETH', 'LTC', 'XRP', 'SOL', 'ADA', 'DOT', 'LINK', 'BNB']
+    is_crypto = clean in crypto_list or clean.endswith('USDT')
 
-    sources = []
-    if TWELVE_DATA_API_KEY:
-        sources.append(('twelvedata', fetch_twelvedata, True))
+    if is_crypto:
+        symbol_binance = clean if clean.endswith('USDT') else f"{clean}USDT"
+        logger.info(f"Крипто: {symbol_binance} через Binance")
+        try:
+            return fetch_binance(symbol_binance, timeframe, limit)
+        except Exception as e:
+            logger.warning(f"Binance ошибка: {e}")
+
+    # Для валют и акций
+    # Если есть ключ Alpha Vantage – используем его
     if ALPHA_VANTAGE_API_KEY:
-        sources.append(('alphavantage', fetch_alphavantage, True))
-    if FINNHUB_API_KEY:
-        sources.append(('finnhub', fetch_finnhub, True))
-    sources.append(('yfinance', fetch_yfinance, False))
+        try:
+            logger.info(f"Попытка Alpha Vantage для {clean}")
+            return fetch_alphavantage(clean, timeframe, limit)
+        except Exception as e:
+            logger.warning(f"Alpha Vantage ошибка: {e}")
+
+    # Резерв – Yahoo Finance (с задержкой)
+    yf_symbol = f"{clean}=X"
+    logger.info(f"Резерв: Yahoo Finance для {yf_symbol}")
     try:
-        from binance.client import Client
-        sources.append(('binance', fetch_binance, False))
-    except ImportError:
-        logger.warning("Binance не установлена")
+        return fetch_yfinance(yf_symbol, timeframe, limit)
+    except Exception as e:
+        logger.warning(f"Yahoo Finance ошибка: {e}")
 
-    for src_name, src_func, needs_key in sources:
-        if needs_key:
-            # если нет ключа, пропускаем
-            if (src_name == 'twelvedata' and not TWELVE_DATA_API_KEY) or \
-               (src_name == 'alphavantage' and not ALPHA_VANTAGE_API_KEY) or \
-               (src_name == 'finnhub' and not FINNHUB_API_KEY):
-                continue
-        for sym in variations:
-            try:
-                df = src_func(sym, timeframe, limit)
-                if df is not None and not df.empty:
-                    logger.info(f"Данные получены: {src_name} для {sym}")
-                    return df
-            except Exception as e:
-                logger.warning(f"{src_name} для {sym} ошибка: {e}")
-                continue
     raise Exception("Не удалось получить данные ни из одного источника")
-
-def fetch_twelvedata(symbol, timeframe, limit):
-    interval_map = {'1m':'1min','5m':'5min','15m':'15min','30m':'30min','1h':'1h','4h':'4h','1d':'1day'}
-    interval = interval_map.get(timeframe, '5min')
-    url = "https://api.twelvedata.com/time_series"
-    params = {'symbol':symbol, 'interval':interval, 'outputsize':limit, 'apikey':TWELVE_DATA_API_KEY}
-    resp = requests.get(url, params=params, timeout=10)
-    data = resp.json()
-    if 'values' not in data:
-        raise Exception("Нет данных от Twelve Data")
-    df = pd.DataFrame(data['values'])
-    df = df.rename(columns={'open':'open','high':'high','low':'low','close':'close','volume':'volume'})
-    for c in ['open','high','low','close','volume']:
-        df[c] = df[c].astype(float)
-    df = df.iloc[::-1].reset_index(drop=True)
-    return df[['open','high','low','close','volume']]
 
 def fetch_alphavantage(symbol, timeframe, limit):
     interval_map = {'1m':'1min','5m':'5min','15m':'15min','30m':'30min','1h':'60min','4h':'60min','1d':'daily'}
@@ -99,37 +80,13 @@ def fetch_alphavantage(symbol, timeframe, limit):
     df = df.iloc[-limit:]
     return df
 
-def fetch_finnhub(symbol, timeframe, limit):
-    # Преобразование символов для Finnhub
-    if symbol in ['BTCUSD','ETHUSD','LTCUSD','XRPUSD','SOLUSD']:
-        symbol = symbol.replace('USD', 'USDT')
-        symbol = f"BINANCE:{symbol}"
-    elif symbol in ['EURUSD','GBPUSD','USDJPY']:
-        symbol = f"OANDA:{symbol}"
-    resolution_map = {'1m':'1','5m':'5','15m':'15','30m':'30','1h':'60','4h':'240','1d':'D'}
-    resolution = resolution_map.get(timeframe, '5')
-    url = f"https://finnhub.io/api/v1/stock/candles?symbol={symbol}&resolution={resolution}&count={limit}&token={FINNHUB_API_KEY}"
-    resp = requests.get(url, timeout=10)
-    data = resp.json()
-    if 'c' not in data or not data['c']:
-        raise Exception("Нет данных от Finnhub")
-    df = pd.DataFrame({
-        'open': data['o'],
-        'high': data['h'],
-        'low': data['l'],
-        'close': data['c'],
-        'volume': data['v']
-    })
-    return df
-
 def fetch_yfinance(symbol, timeframe, limit):
-    if not symbol.endswith('=X'):
-        symbol = symbol + '=X'
+    time.sleep(1.5)  # задержка, чтобы не превысить лимит
     interval = timeframe
     if interval == '4h':
         interval = '1h'
     ticker = yf.Ticker(symbol)
-    df = ticker.history(period='5d', interval=interval)
+    df = ticker.history(period='7d', interval=interval)
     if df.empty:
         raise Exception("Нет данных от Yahoo Finance")
     if timeframe == '4h':
@@ -138,8 +95,6 @@ def fetch_yfinance(symbol, timeframe, limit):
     return df[['Open','High','Low','Close','Volume']].rename(columns={'Open':'open','High':'high','Low':'low','Close':'close','Volume':'volume'})
 
 def fetch_binance(symbol, timeframe, limit):
-    if not symbol.endswith('USDT') and not symbol.endswith('BUSD'):
-        symbol = symbol + 'USDT'
     from binance.client import Client
     client = Client()
     interval_map = {'1m':Client.KLINE_INTERVAL_1MINUTE,'5m':Client.KLINE_INTERVAL_5MINUTE,'15m':Client.KLINE_INTERVAL_15MINUTE,'30m':Client.KLINE_INTERVAL_30MINUTE,'1h':Client.KLINE_INTERVAL_1HOUR,'4h':Client.KLINE_INTERVAL_4HOUR,'1d':Client.KLINE_INTERVAL_1DAY}
@@ -236,7 +191,7 @@ def compute_signal(df):
         'ADX':adx, 'Last_Close':last
     }}
 
-# -------------------- МЕНЮ --------------------
+# -------------------- МЕНЮ И ОБРАБОТЧИКИ --------------------
 CURRENCIES = ["AUD/USD OTC","EUR/USD OTC","EUR/RUB OTC","GBP/JPY OTC",
               "USD/CAD OTC","USD/CHF OTC","USD/JPY OTC","GBP/USD OTC"]
 CRYPTO = ["BTC/USD OTC","ETH/USD OTC","LTC/USD OTC","XRP/USD OTC","SOL/USD OTC"]
@@ -316,6 +271,9 @@ async def asset_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     asset = query.data
+    # Игнорируем служебные кнопки
+    if asset in ['go', 'currencies', 'crypto', 'commodities', 'stocks', 'indices']:
+        return
     context.user_data['asset'] = asset
     text = f"*{asset}*\n\nВыберите таймфрейм:"
     keyboard = build_keyboard(TIMEFRAMES, back=True, back_data="back_to_section")
@@ -329,6 +287,8 @@ async def timeframe_selected(update: Update, context: ContextTypes.DEFAULT_TYPE)
     query = update.callback_query
     await query.answer()
     tf = query.data
+    if tf in ['back_to_section', 'back_to_asset', 'go', 'home']:
+        return
     context.user_data['timeframe'] = tf
     text = f"✅ Таймфрейм *{tf}* выбран.\nТеперь выберите время сделки:"
     keyboard = build_keyboard(DURATIONS, back=True, back_data="back_to_asset")
@@ -342,23 +302,17 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     duration = query.data
-    context.user_data['duration'] = duration
+    if duration in ['back_to_asset', 'back_to_section', 'go', 'home']:
+        return
 
     asset = context.user_data.get('asset')
     timeframe = context.user_data.get('timeframe')
-
-    # --- ПРОВЕРКА: если asset – служебная кнопка, игнорируем ---
-    if not asset or asset in ['back_to_asset', 'back_to_section', 'go', 'home'] or asset.startswith('back_'):
-        await update.effective_chat.send_message("⚠️ Ошибка: выберите актив заново через меню.")
-        return
-
-    if not timeframe:
-        await update.effective_chat.send_message("⚠️ Ошибка: таймфрейм не выбран.")
+    if not asset or not timeframe:
+        await update.effective_chat.send_message("⚠️ Ошибка: выберите актив и таймфрейм заново.")
         return
 
     await update.effective_chat.send_message("⏳ Анализирую рынок...")
     try:
-        # Очищаем символ от OTC и слешей
         clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
         logger.info(f"Пробую получить данные для {clean_asset}, таймфрейм {timeframe}")
         df = get_market_data(clean_asset, timeframe, limit=100)
