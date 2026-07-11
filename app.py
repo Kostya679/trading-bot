@@ -14,7 +14,7 @@ import threading
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY", "")
+TWELVE_DATA_API_KEY = os.getenv("TWELVE_DATA_API_KEY", "")
 
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не задан")
@@ -24,32 +24,37 @@ logger = logging.getLogger(__name__)
 
 # -------------------- ПОЛУЧЕНИЕ ДАННЫХ --------------------
 def get_market_data(symbol, timeframe, limit=100):
-    """
-    Для криптовалют → Binance (символ + USDT)
-    Для валют и акций → Alpha Vantage (если есть ключ) или Yahoo Finance
-    """
+    # Очистка символа
     clean = symbol.upper().replace('=X', '').replace('_OTC', '').replace('USDT', '').replace('BUSD', '')
-    crypto_list = ['BTC', 'ETH', 'LTC', 'XRP', 'SOL', 'ADA', 'DOT', 'LINK', 'BNB']
-    is_crypto = clean in crypto_list or clean.endswith('USDT')
+    clean = clean.replace('/', '')  # убираем слеши для валютных пар
 
+    # Список криптовалют
+    crypto_list = ['BTC', 'ETH', 'LTC', 'XRP', 'SOL', 'ADA', 'DOT', 'LINK', 'BNB']
+    is_crypto = any(clean.startswith(crypto) for crypto in crypto_list)
+
+    # 1. Криптовалюта → Binance
     if is_crypto:
-        symbol_binance = clean if clean.endswith('USDT') else f"{clean}USDT"
+        base = None
+        for crypto in crypto_list:
+            if clean.startswith(crypto):
+                base = crypto
+                break
+        symbol_binance = f"{base}USDT"
         logger.info(f"Крипто: {symbol_binance} через Binance")
         try:
             return fetch_binance(symbol_binance, timeframe, limit)
         except Exception as e:
             logger.warning(f"Binance ошибка: {e}")
 
-    # Для валют и акций
-    # Если есть ключ Alpha Vantage – используем его
-    if ALPHA_VANTAGE_API_KEY:
+    # 2. Валюты и акции → Twelve Data (если есть ключ)
+    if TWELVE_DATA_API_KEY:
         try:
-            logger.info(f"Попытка Alpha Vantage для {clean}")
-            return fetch_alphavantage(clean, timeframe, limit)
+            logger.info(f"Twelve Data для {clean}")
+            return fetch_twelvedata(clean, timeframe, limit)
         except Exception as e:
-            logger.warning(f"Alpha Vantage ошибка: {e}")
+            logger.warning(f"Twelve Data ошибка: {e}")
 
-    # Резерв – Yahoo Finance (с задержкой)
+    # 3. Резерв – Yahoo Finance (с задержкой 3 сек)
     yf_symbol = f"{clean}=X"
     logger.info(f"Резерв: Yahoo Finance для {yf_symbol}")
     try:
@@ -59,29 +64,8 @@ def get_market_data(symbol, timeframe, limit=100):
 
     raise Exception("Не удалось получить данные ни из одного источника")
 
-def fetch_alphavantage(symbol, timeframe, limit):
-    interval_map = {'1m':'1min','5m':'5min','15m':'15min','30m':'30min','1h':'60min','4h':'60min','1d':'daily'}
-    interval = interval_map.get(timeframe, '5min')
-    # Определяем, валюта или акция
-    if len(symbol) == 6 and symbol.isalpha() and symbol in ['EURUSD','GBPUSD','USDJPY','AUDUSD','USDCAD','USDCHF','NZDUSD']:
-        url = f"https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol={symbol[:3]}&to_symbol={symbol[3:]}&interval={interval}&apikey={ALPHA_VANTAGE_API_KEY}&outputsize=full"
-    else:
-        url = f"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={symbol}&interval={interval}&apikey={ALPHA_VANTAGE_API_KEY}&outputsize=full"
-    resp = requests.get(url, timeout=10)
-    data = resp.json()
-    if 'Time Series' not in data and 'Time Series FX' not in data:
-        raise Exception("Нет данных от Alpha Vantage")
-    key = 'Time Series' if 'Time Series' in data else 'Time Series FX'
-    df = pd.DataFrame.from_dict(data[key], orient='index')
-    df.index = pd.to_datetime(df.index)
-    df = df.sort_index()
-    df = df.rename(columns={'1. open':'open','2. high':'high','3. low':'low','4. close':'close','5. volume':'volume'})
-    df = df[['open','high','low','close','volume']].astype(float)
-    df = df.iloc[-limit:]
-    return df
-
 def fetch_yfinance(symbol, timeframe, limit):
-    time.sleep(1.5)  # задержка, чтобы не превысить лимит
+    time.sleep(3)
     interval = timeframe
     if interval == '4h':
         interval = '1h'
@@ -104,6 +88,22 @@ def fetch_binance(symbol, timeframe, limit):
     df = pd.DataFrame(klines, columns=['timestamp','open','high','low','close','volume','ct','qav','trades','tbbav','tbqav','ignore'])
     for c in ['open','high','low','close','volume']:
         df[c] = df[c].astype(float)
+    return df[['open','high','low','close','volume']]
+
+def fetch_twelvedata(symbol, timeframe, limit):
+    interval_map = {'1m':'1min','5m':'5min','15m':'15min','30m':'30min','1h':'1h','4h':'4h','1d':'1day'}
+    interval = interval_map.get(timeframe, '5min')
+    url = "https://api.twelvedata.com/time_series"
+    params = {'symbol':symbol, 'interval':interval, 'outputsize':limit, 'apikey':TWELVE_DATA_API_KEY}
+    resp = requests.get(url, params=params, timeout=10)
+    data = resp.json()
+    if 'values' not in data:
+        raise Exception("Нет данных от Twelve Data")
+    df = pd.DataFrame(data['values'])
+    df = df.rename(columns={'open':'open','high':'high','low':'low','close':'close','volume':'volume'})
+    for c in ['open','high','low','close','volume']:
+        df[c] = df[c].astype(float)
+    df = df.iloc[::-1].reset_index(drop=True)
     return df[['open','high','low','close','volume']]
 
 # -------------------- РАСЧЁТ СИГНАЛА --------------------
@@ -191,7 +191,7 @@ def compute_signal(df):
         'ADX':adx, 'Last_Close':last
     }}
 
-# -------------------- МЕНЮ И ОБРАБОТЧИКИ --------------------
+# -------------------- МЕНЮ --------------------
 CURRENCIES = ["AUD/USD OTC","EUR/USD OTC","EUR/RUB OTC","GBP/JPY OTC",
               "USD/CAD OTC","USD/CHF OTC","USD/JPY OTC","GBP/USD OTC"]
 CRYPTO = ["BTC/USD OTC","ETH/USD OTC","LTC/USD OTC","XRP/USD OTC","SOL/USD OTC"]
@@ -271,7 +271,6 @@ async def asset_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     asset = query.data
-    # Игнорируем служебные кнопки
     if asset in ['go', 'currencies', 'crypto', 'commodities', 'stocks', 'indices']:
         return
     context.user_data['asset'] = asset
@@ -300,15 +299,23 @@ async def timeframe_selected(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    # Защита от повторной обработки
+    if context.user_data.get('processing', False):
+        await query.answer("Уже обрабатываю...")
+        return
+    context.user_data['processing'] = True
+
     await query.answer()
     duration = query.data
     if duration in ['back_to_asset', 'back_to_section', 'go', 'home']:
+        context.user_data['processing'] = False
         return
 
     asset = context.user_data.get('asset')
     timeframe = context.user_data.get('timeframe')
     if not asset or not timeframe:
         await update.effective_chat.send_message("⚠️ Ошибка: выберите актив и таймфрейм заново.")
+        context.user_data['processing'] = False
         return
 
     await update.effective_chat.send_message("⏳ Анализирую рынок...")
@@ -343,15 +350,23 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"❌ Ошибка: {str(e)}",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
+    finally:
+        context.user_data['processing'] = False
 
 async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if context.user_data.get('processing', False):
+        await query.answer("Уже обрабатываю...")
+        return
+    context.user_data['processing'] = True
+
     await query.answer()
     asset = context.user_data.get('asset')
     timeframe = context.user_data.get('timeframe')
     duration = context.user_data.get('duration')
     if not asset or not timeframe or not duration:
         await update.effective_chat.send_message("Ошибка: данные потеряны. Начните заново /start")
+        context.user_data['processing'] = False
         return
     await update.effective_chat.send_message("⏳ Анализирую рынок...")
     try:
@@ -384,6 +399,8 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"❌ Ошибка: {str(e)}",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
+    finally:
+        context.user_data['processing'] = False
 
 async def back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
