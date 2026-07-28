@@ -22,16 +22,34 @@ if not BOT_TOKEN:
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# -------------------- СОПОСТАВЛЕНИЕ СИМВОЛОВ --------------------
+SYMBOL_MAP = {
+    "S&P 500": {"twelvedata": "SPX", "yfinance": "^GSPC"},
+    "NASDAQ": {"twelvedata": "COMP", "yfinance": "^IXIC"},
+    "Dow Jones": {"twelvedata": "DJI", "yfinance": "^DJI"},
+    "Nikkei 225": {"twelvedata": "N225", "yfinance": "^N225"},
+    "Gold": {"twelvedata": "XAUUSD", "yfinance": "GC=F"},
+    "Silver": {"twelvedata": "XAGUSD", "yfinance": "SI=F"},
+    "Oil": {"twelvedata": "WTI", "yfinance": "CL=F"},
+    "Natural Gas": {"twelvedata": "NG", "yfinance": "NG=F"}
+}
+
+# Список валют (для определения)
+FOREX_LIST = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'USDCHF', 'NZDUSD', 'EURGBP', 'EURJPY']
+
 # -------------------- ПОЛУЧЕНИЕ ДАННЫХ --------------------
 def get_market_data(symbol, timeframe, limit=100):
     # Очистка символа
     clean = symbol.upper().replace('=X', '').replace('_OTC', '').replace('USDT', '').replace('BUSD', '')
-    clean = clean.replace('/', '')  # убираем слеши для валютных пар
-
+    clean = clean.replace('/', '')
+    
+    # Проверка, является ли символ индексом или сырьём
+    mapped = SYMBOL_MAP.get(clean, None)
+    
     # Список криптовалют
     crypto_list = ['BTC', 'ETH', 'LTC', 'XRP', 'SOL', 'ADA', 'DOT', 'LINK', 'BNB']
     is_crypto = any(clean.startswith(crypto) for crypto in crypto_list)
-
+    
     # 1. Криптовалюта → Binance
     if is_crypto:
         base = None
@@ -46,7 +64,28 @@ def get_market_data(symbol, timeframe, limit=100):
         except Exception as e:
             logger.warning(f"Binance ошибка: {e}")
 
-    # 2. Валюты и акции → Twelve Data (если есть ключ)
+    # 2. Индексы и сырьё → Twelve Data или Yahoo Finance (с маппингом)
+    if mapped:
+        # Пробуем Twelve Data
+        if TWELVE_DATA_API_KEY:
+            td_symbol = mapped.get('twelvedata')
+            if td_symbol:
+                try:
+                    logger.info(f"Twelve Data для {td_symbol} (маппинг)")
+                    return fetch_twelvedata(td_symbol, timeframe, limit)
+                except Exception as e:
+                    logger.warning(f"Twelve Data ошибка: {e}")
+        # Пробуем Yahoo Finance
+        yf_symbol = mapped.get('yfinance')
+        if yf_symbol:
+            try:
+                logger.info(f"Yahoo Finance для {yf_symbol} (маппинг)")
+                return fetch_yfinance(yf_symbol, timeframe, limit, is_index=True)
+            except Exception as e:
+                logger.warning(f"Yahoo Finance ошибка: {e}")
+        raise Exception("Не удалось получить данные для индекса или сырья")
+
+    # 3. Валюты и акции → Twelve Data (если есть ключ)
     if TWELVE_DATA_API_KEY:
         try:
             logger.info(f"Twelve Data для {clean}")
@@ -54,8 +93,10 @@ def get_market_data(symbol, timeframe, limit=100):
         except Exception as e:
             logger.warning(f"Twelve Data ошибка: {e}")
 
-    # 3. Резерв – Yahoo Finance (с задержкой 3 сек)
-    yf_symbol = f"{clean}=X"
+    # 4. Резерв – Yahoo Finance (с задержкой 3 сек)
+    yf_symbol = f"{clean}=X" if clean not in FOREX_LIST else clean  # для валют добавляем =X
+    if clean in FOREX_LIST:
+        yf_symbol = f"{clean}=X"
     logger.info(f"Резерв: Yahoo Finance для {yf_symbol}")
     try:
         return fetch_yfinance(yf_symbol, timeframe, limit)
@@ -64,7 +105,7 @@ def get_market_data(symbol, timeframe, limit=100):
 
     raise Exception("Не удалось получить данные ни из одного источника")
 
-def fetch_yfinance(symbol, timeframe, limit):
+def fetch_yfinance(symbol, timeframe, limit, is_index=False):
     time.sleep(3)
     interval = timeframe
     if interval == '4h':
@@ -299,7 +340,6 @@ async def timeframe_selected(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    # Защита от повторной обработки
     if context.user_data.get('processing', False):
         await query.answer("Уже обрабатываю...")
         return
