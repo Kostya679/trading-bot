@@ -15,6 +15,7 @@ import threading
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TWELVE_DATA_API_KEY = os.getenv("TWELVE_DATA_API_KEY", "")
+ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY", "")
 
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не задан")
@@ -67,6 +68,7 @@ def get_market_data(symbol, timeframe, limit=100):
         cfg = SYMBOL_CONFIG[clean]
         primary = cfg.get('primary', 'twelvedata')
         
+        # Пробуем первичный источник
         if primary == 'twelvedata' and TWELVE_DATA_API_KEY:
             try:
                 td_sym = cfg['twelvedata']
@@ -82,7 +84,7 @@ def get_market_data(symbol, timeframe, limit=100):
             except Exception as e:
                 logger.warning(f"Yahoo Finance primary ошибка: {e}")
         
-        # Резерв
+        # Резерв – другой источник
         if primary == 'twelvedata' and cfg.get('yfinance'):
             try:
                 yf_sym = cfg['yfinance']
@@ -97,6 +99,15 @@ def get_market_data(symbol, timeframe, limit=100):
                 return fetch_twelvedata(td_sym, timeframe, limit)
             except Exception as e:
                 logger.warning(f"Twelve Data резерв ошибка: {e}")
+        
+        # Если оба не сработали – пробуем Alpha Vantage (если есть ключ)
+        if ALPHA_VANTAGE_API_KEY:
+            try:
+                av_sym = cfg.get('twelvedata', clean)
+                logger.info(f"Alpha Vantage (резерв) для {av_sym}")
+                return fetch_alphavantage(av_sym, timeframe, limit)
+            except Exception as e:
+                logger.warning(f"Alpha Vantage резерв ошибка: {e}")
         
         raise Exception("Не удалось получить данные для индекса или сырья")
     
@@ -177,6 +188,26 @@ def fetch_twelvedata(symbol, timeframe, limit):
         df[c] = df[c].astype(float)
     df = df.iloc[::-1].reset_index(drop=True)
     return df[['open','high','low','close','volume']]
+
+def fetch_alphavantage(symbol, timeframe, limit):
+    """
+    Получение данных через Alpha Vantage (индексы и сырьё).
+    Использует TIME_SERIES_INTRADAY.
+    """
+    interval_map = {'1m':'1min','5m':'5min','15m':'15min','30m':'30min','1h':'60min','4h':'60min','1d':'daily'}
+    interval = interval_map.get(timeframe, '5min')
+    url = f"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={symbol}&interval={interval}&apikey={ALPHA_VANTAGE_API_KEY}&outputsize=full"
+    resp = requests.get(url, timeout=10)
+    data = resp.json()
+    if 'Time Series' not in data:
+        raise Exception("Нет данных от Alpha Vantage")
+    df = pd.DataFrame.from_dict(data['Time Series'], orient='index')
+    df.index = pd.to_datetime(df.index)
+    df = df.sort_index()
+    df = df.rename(columns={'1. open':'open','2. high':'high','3. low':'low','4. close':'close','5. volume':'volume'})
+    df = df[['open','high','low','close','volume']].astype(float)
+    df = df.iloc[-limit:]
+    return df
 
 # -------------------- РАСЧЁТ СИГНАЛА --------------------
 def compute_signal(df):
