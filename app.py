@@ -23,16 +23,16 @@ if not BOT_TOKEN:
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# -------------------- КОНФИГУРАЦИЯ АКТИВОВ --------------------
+# -------------------- КОНФИГУРАЦИЯ АКТИВОВ (все ключи в ВЕРХНЕМ РЕГИСТРЕ) --------------------
 SYMBOL_CONFIG = {
     "S&P 500": {"twelvedata": "SPX", "yfinance": "^GSPC", "primary": "twelvedata"},
     "NASDAQ": {"twelvedata": "COMP", "yfinance": "^IXIC", "primary": "twelvedata"},
-    "Dow Jones": {"twelvedata": "DJI", "yfinance": "^DJI", "primary": "yfinance"},
-    "Nikkei 225": {"twelvedata": "N225", "yfinance": "^N225", "primary": "yfinance"},
-    "Gold": {"twelvedata": "XAUUSD", "yfinance": "GC=F", "primary": "twelvedata"},
-    "Silver": {"twelvedata": "XAGUSD", "yfinance": "SI=F", "primary": "yfinance"},
-    "Oil": {"twelvedata": "WTI", "yfinance": "CL=F", "primary": "yfinance"},
-    "Natural Gas": {"twelvedata": "NG", "yfinance": "NG=F", "primary": "yfinance"}
+    "DOW JONES": {"twelvedata": "DJI", "yfinance": "^DJI", "primary": "yfinance"},
+    "NIKKEI 225": {"twelvedata": "N225", "yfinance": "^N225", "primary": "yfinance"},
+    "GOLD": {"twelvedata": "XAUUSD", "yfinance": "GC=F", "primary": "twelvedata"},
+    "SILVER": {"twelvedata": "XAGUSD", "yfinance": "SI=F", "primary": "yfinance"},
+    "OIL": {"twelvedata": "WTI", "yfinance": "CL=F", "primary": "yfinance"},
+    "NATURAL GAS": {"twelvedata": "NG", "yfinance": "NG=F", "primary": "yfinance"}
 }
 
 STOCK_ALTERNATIVES = {
@@ -63,7 +63,7 @@ def get_market_data(symbol, timeframe, limit=100):
         else:
             raise Exception("Не удалось определить криптовалюту")
     
-    # 2. Индексы и сырьё
+    # 2. Индексы и сырьё (проверяем по clean в верхнем регистре)
     if clean in SYMBOL_CONFIG:
         cfg = SYMBOL_CONFIG[clean]
         primary = cfg.get('primary', 'twelvedata')
@@ -190,10 +190,6 @@ def fetch_twelvedata(symbol, timeframe, limit):
     return df[['open','high','low','close','volume']]
 
 def fetch_alphavantage(symbol, timeframe, limit):
-    """
-    Получение данных через Alpha Vantage (индексы и сырьё).
-    Использует TIME_SERIES_INTRADAY.
-    """
     interval_map = {'1m':'1min','5m':'5min','15m':'15min','30m':'30min','1h':'60min','4h':'60min','1d':'daily'}
     interval = interval_map.get(timeframe, '5min')
     url = f"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={symbol}&interval={interval}&apikey={ALPHA_VANTAGE_API_KEY}&outputsize=full"
@@ -294,7 +290,7 @@ def compute_signal(df):
         'ADX':adx, 'Last_Close':last
     }}
 
-# -------------------- МЕНЮ И КНОПКИ --------------------
+# -------------------- МЕНЮ И КНОПКИ (без изменений) --------------------
 CURRENCIES = ["AUD/USD OTC","EUR/USD OTC","EUR/RUB OTC","GBP/JPY OTC",
               "USD/CAD OTC","USD/CHF OTC","USD/JPY OTC","GBP/USD OTC"]
 CRYPTO = ["BTC/USD OTC","ETH/USD OTC","LTC/USD OTC","XRP/USD OTC","SOL/USD OTC"]
@@ -319,7 +315,7 @@ def build_keyboard(items, back=False, back_data=None, cols=2):
         keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data=back_data or "back")])
     return InlineKeyboardMarkup(keyboard)
 
-# -------------------- ОБРАБОТЧИКИ --------------------
+# -------------------- ОБРАБОТЧИКИ (без изменений) --------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         text = ("🚀 *Торговый бот-ассистент*\n\n"
