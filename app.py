@@ -22,91 +22,119 @@ if not BOT_TOKEN:
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# -------------------- СОПОСТАВЛЕНИЕ СИМВОЛОВ --------------------
-SYMBOL_MAP = {
-    "S&P 500": {"twelvedata": "SPX", "yfinance": "^GSPC"},
-    "NASDAQ": {"twelvedata": "COMP", "yfinance": "^IXIC"},
-    "Dow Jones": {"twelvedata": "DJI", "yfinance": "^DJI"},
-    "Nikkei 225": {"twelvedata": "N225", "yfinance": "^N225"},
-    "Gold": {"twelvedata": "XAUUSD", "yfinance": "GC=F"},
-    "Silver": {"twelvedata": "XAGUSD", "yfinance": "SI=F"},
-    "Oil": {"twelvedata": "WTI", "yfinance": "CL=F"},
-    "Natural Gas": {"twelvedata": "NG", "yfinance": "NG=F"}
+# -------------------- КОНФИГУРАЦИЯ АКТИВОВ --------------------
+SYMBOL_CONFIG = {
+    "S&P 500": {"twelvedata": "SPX", "yfinance": "^GSPC", "primary": "twelvedata"},
+    "NASDAQ": {"twelvedata": "COMP", "yfinance": "^IXIC", "primary": "twelvedata"},
+    "Dow Jones": {"twelvedata": "DJI", "yfinance": "^DJI", "primary": "yfinance"},
+    "Nikkei 225": {"twelvedata": "N225", "yfinance": "^N225", "primary": "yfinance"},
+    "Gold": {"twelvedata": "XAUUSD", "yfinance": "GC=F", "primary": "twelvedata"},
+    "Silver": {"twelvedata": "XAGUSD", "yfinance": "SI=F", "primary": "yfinance"},
+    "Oil": {"twelvedata": "WTI", "yfinance": "CL=F", "primary": "yfinance"},
+    "Natural Gas": {"twelvedata": "NG", "yfinance": "NG=F", "primary": "yfinance"}
 }
 
-# Список валют (для определения)
+STOCK_ALTERNATIVES = {
+    "GOOGL": ["GOOG"],
+    "AMZN": ["AMZN"],
+    "AAPL": ["AAPL"],
+    "TSLA": ["TSLA"],
+    "MSFT": ["MSFT"],
+    "NVDA": ["NVDA"]
+}
+
 FOREX_LIST = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'USDCHF', 'NZDUSD', 'EURGBP', 'EURJPY']
+CRYPTO_LIST = ['BTC', 'ETH', 'LTC', 'XRP', 'SOL', 'ADA', 'DOT', 'LINK', 'BNB']
 
 # -------------------- ПОЛУЧЕНИЕ ДАННЫХ --------------------
 def get_market_data(symbol, timeframe, limit=100):
-    # Очистка символа
     clean = symbol.upper().replace('=X', '').replace('_OTC', '').replace('USDT', '').replace('BUSD', '')
     clean = clean.replace('/', '')
     
-    # Проверка, является ли символ индексом или сырьём
-    mapped = SYMBOL_MAP.get(clean, None)
-    
-    # Список криптовалют
-    crypto_list = ['BTC', 'ETH', 'LTC', 'XRP', 'SOL', 'ADA', 'DOT', 'LINK', 'BNB']
-    is_crypto = any(clean.startswith(crypto) for crypto in crypto_list)
-    
-    # 1. Криптовалюта → Binance
+    # 1. Криптовалюта → только Binance
+    is_crypto = any(clean.startswith(crypto) for crypto in CRYPTO_LIST)
     if is_crypto:
-        base = None
-        for crypto in crypto_list:
-            if clean.startswith(crypto):
-                base = crypto
-                break
-        symbol_binance = f"{base}USDT"
-        logger.info(f"Крипто: {symbol_binance} через Binance")
-        try:
+        base = next((c for c in CRYPTO_LIST if clean.startswith(c)), None)
+        if base:
+            symbol_binance = f"{base}USDT"
+            logger.info(f"Крипто: {symbol_binance} через Binance")
             return fetch_binance(symbol_binance, timeframe, limit)
-        except Exception as e:
-            logger.warning(f"Binance ошибка: {e}")
-
-    # 2. Индексы и сырьё → Twelve Data или Yahoo Finance (с маппингом)
-    if mapped:
-        # Пробуем Twelve Data
-        if TWELVE_DATA_API_KEY:
-            td_symbol = mapped.get('twelvedata')
-            if td_symbol:
-                try:
-                    logger.info(f"Twelve Data для {td_symbol} (маппинг)")
-                    return fetch_twelvedata(td_symbol, timeframe, limit)
-                except Exception as e:
-                    logger.warning(f"Twelve Data ошибка: {e}")
-        # Пробуем Yahoo Finance
-        yf_symbol = mapped.get('yfinance')
-        if yf_symbol:
+        else:
+            raise Exception("Не удалось определить криптовалюту")
+    
+    # 2. Индексы и сырьё
+    if clean in SYMBOL_CONFIG:
+        cfg = SYMBOL_CONFIG[clean]
+        primary = cfg.get('primary', 'twelvedata')
+        
+        if primary == 'twelvedata' and TWELVE_DATA_API_KEY:
             try:
-                logger.info(f"Yahoo Finance для {yf_symbol} (маппинг)")
-                return fetch_yfinance(yf_symbol, timeframe, limit, is_index=True)
+                td_sym = cfg['twelvedata']
+                logger.info(f"Twelve Data (primary) для {td_sym}")
+                return fetch_twelvedata(td_sym, timeframe, limit)
             except Exception as e:
-                logger.warning(f"Yahoo Finance ошибка: {e}")
+                logger.warning(f"Twelve Data primary ошибка: {e}")
+        elif primary == 'yfinance':
+            yf_sym = cfg['yfinance']
+            try:
+                logger.info(f"Yahoo Finance (primary) для {yf_sym}")
+                return fetch_yfinance(yf_sym, timeframe, limit, is_index=True)
+            except Exception as e:
+                logger.warning(f"Yahoo Finance primary ошибка: {e}")
+        
+        # Резерв
+        if primary == 'twelvedata' and cfg.get('yfinance'):
+            try:
+                yf_sym = cfg['yfinance']
+                logger.info(f"Yahoo Finance (резерв) для {yf_sym}")
+                return fetch_yfinance(yf_sym, timeframe, limit, is_index=True)
+            except Exception as e:
+                logger.warning(f"Yahoo Finance резерв ошибка: {e}")
+        elif primary == 'yfinance' and TWELVE_DATA_API_KEY and cfg.get('twelvedata'):
+            try:
+                td_sym = cfg['twelvedata']
+                logger.info(f"Twelve Data (резерв) для {td_sym}")
+                return fetch_twelvedata(td_sym, timeframe, limit)
+            except Exception as e:
+                logger.warning(f"Twelve Data резерв ошибка: {e}")
+        
         raise Exception("Не удалось получить данные для индекса или сырья")
-
-    # 3. Валюты и акции → Twelve Data (если есть ключ)
+    
+    # 3. Акции → сначала Twelve Data (если есть), затем Yahoo с альтернативами
     if TWELVE_DATA_API_KEY:
         try:
-            logger.info(f"Twelve Data для {clean}")
+            logger.info(f"Twelve Data для акции {clean}")
             return fetch_twelvedata(clean, timeframe, limit)
         except Exception as e:
-            logger.warning(f"Twelve Data ошибка: {e}")
-
-    # 4. Резерв – Yahoo Finance (с задержкой 3 сек)
-    yf_symbol = f"{clean}=X" if clean not in FOREX_LIST else clean  # для валют добавляем =X
+            logger.warning(f"Twelve Data ошибка для акции: {e}")
+    
+    yf_symbols = [clean] + STOCK_ALTERNATIVES.get(clean, [])
+    for sym in yf_symbols:
+        try:
+            logger.info(f"Yahoo Finance для {sym}")
+            return fetch_yfinance(sym, timeframe, limit)
+        except Exception as e:
+            logger.warning(f"Yahoo Finance ошибка для {sym}: {e}")
+    
+    # 4. Валюты → Twelve Data (если есть), затем Yahoo с =X
     if clean in FOREX_LIST:
+        if TWELVE_DATA_API_KEY:
+            try:
+                logger.info(f"Twelve Data для валюты {clean}")
+                return fetch_twelvedata(clean, timeframe, limit)
+            except Exception as e:
+                logger.warning(f"Twelve Data ошибка для валюты: {e}")
         yf_symbol = f"{clean}=X"
-    logger.info(f"Резерв: Yahoo Finance для {yf_symbol}")
-    try:
-        return fetch_yfinance(yf_symbol, timeframe, limit)
-    except Exception as e:
-        logger.warning(f"Yahoo Finance ошибка: {e}")
-
+        logger.info(f"Yahoo Finance для валюты {yf_symbol}")
+        try:
+            return fetch_yfinance(yf_symbol, timeframe, limit)
+        except Exception as e:
+            logger.warning(f"Yahoo Finance ошибка: {e}")
+    
     raise Exception("Не удалось получить данные ни из одного источника")
 
 def fetch_yfinance(symbol, timeframe, limit, is_index=False):
-    time.sleep(3)
+    time.sleep(4)
     interval = timeframe
     if interval == '4h':
         interval = '1h'
@@ -120,16 +148,19 @@ def fetch_yfinance(symbol, timeframe, limit, is_index=False):
     return df[['Open','High','Low','Close','Volume']].rename(columns={'Open':'open','High':'high','Low':'low','Close':'close','Volume':'volume'})
 
 def fetch_binance(symbol, timeframe, limit):
-    from binance.client import Client
-    client = Client()
-    interval_map = {'1m':Client.KLINE_INTERVAL_1MINUTE,'5m':Client.KLINE_INTERVAL_5MINUTE,'15m':Client.KLINE_INTERVAL_15MINUTE,'30m':Client.KLINE_INTERVAL_30MINUTE,'1h':Client.KLINE_INTERVAL_1HOUR,'4h':Client.KLINE_INTERVAL_4HOUR,'1d':Client.KLINE_INTERVAL_1DAY}
-    klines = client.get_klines(symbol=symbol.upper(), interval=interval_map.get(timeframe, Client.KLINE_INTERVAL_5MINUTE), limit=limit)
-    if not klines:
-        raise Exception("Нет данных от Binance")
-    df = pd.DataFrame(klines, columns=['timestamp','open','high','low','close','volume','ct','qav','trades','tbbav','tbqav','ignore'])
-    for c in ['open','high','low','close','volume']:
-        df[c] = df[c].astype(float)
-    return df[['open','high','low','close','volume']]
+    try:
+        from binance.client import Client
+        client = Client()
+        interval_map = {'1m':Client.KLINE_INTERVAL_1MINUTE,'5m':Client.KLINE_INTERVAL_5MINUTE,'15m':Client.KLINE_INTERVAL_15MINUTE,'30m':Client.KLINE_INTERVAL_30MINUTE,'1h':Client.KLINE_INTERVAL_1HOUR,'4h':Client.KLINE_INTERVAL_4HOUR,'1d':Client.KLINE_INTERVAL_1DAY}
+        klines = client.get_klines(symbol=symbol.upper(), interval=interval_map.get(timeframe, Client.KLINE_INTERVAL_5MINUTE), limit=limit)
+        if not klines:
+            raise Exception("Нет данных от Binance")
+        df = pd.DataFrame(klines, columns=['timestamp','open','high','low','close','volume','ct','qav','trades','tbbav','tbqav','ignore'])
+        for c in ['open','high','low','close','volume']:
+            df[c] = df[c].astype(float)
+        return df[['open','high','low','close','volume']]
+    except Exception as e:
+        raise Exception(f"Ошибка Binance: {e}")
 
 def fetch_twelvedata(symbol, timeframe, limit):
     interval_map = {'1m':'1min','5m':'5min','15m':'15min','30m':'30min','1h':'1h','4h':'4h','1d':'1day'}
@@ -138,7 +169,7 @@ def fetch_twelvedata(symbol, timeframe, limit):
     params = {'symbol':symbol, 'interval':interval, 'outputsize':limit, 'apikey':TWELVE_DATA_API_KEY}
     resp = requests.get(url, params=params, timeout=10)
     data = resp.json()
-    if 'values' not in data:
+    if 'values' not in data or len(data['values']) == 0:
         raise Exception("Нет данных от Twelve Data")
     df = pd.DataFrame(data['values'])
     df = df.rename(columns={'open':'open','high':'high','low':'low','close':'close','volume':'volume'})
@@ -232,7 +263,7 @@ def compute_signal(df):
         'ADX':adx, 'Last_Close':last
     }}
 
-# -------------------- МЕНЮ --------------------
+# -------------------- МЕНЮ И КНОПКИ --------------------
 CURRENCIES = ["AUD/USD OTC","EUR/USD OTC","EUR/RUB OTC","GBP/JPY OTC",
               "USD/CAD OTC","USD/CHF OTC","USD/JPY OTC","GBP/USD OTC"]
 CRYPTO = ["BTC/USD OTC","ETH/USD OTC","LTC/USD OTC","XRP/USD OTC","SOL/USD OTC"]
