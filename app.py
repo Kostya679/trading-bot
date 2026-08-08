@@ -23,7 +23,7 @@ if not BOT_TOKEN:
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# -------------------- МАППИНГ ТАЙМФРЕЙМОВ ДЛЯ РАЗНЫХ ИСТОЧНИКОВ --------------------
+# -------------------- МАППИНГ ТАЙМФРЕЙМОВ --------------------
 YFINANCE_INTERVAL_MAP = {
     '5s': '1m', '10s': '1m', '15s': '1m', '30s': '1m',
     '1m': '1m', '2m': '1m', '3m': '1m',
@@ -66,7 +66,14 @@ STOCK_ALTERNATIVES = {
     "NVDA": ["NVDA"]
 }
 
-FOREX_LIST = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'USDCHF', 'NZDUSD', 'EURGBP', 'EURJPY']
+# Расширенный список валютных пар (все, что есть в меню CURRENCIES)
+FOREX_LIST = [
+    'AUDUSD', 'EURUSD', 'EURGBP', 'EURJPY', 'GBPJPY', 'USDCAD', 'USDCHF',
+    'USDJPY', 'GBPUSD', 'NZDUSD', 'EURCHF', 'GBPAUD', 'AUDJPY', 'CADJPY',
+    'CHFJPY', 'EURNZD', 'GBPCAD', 'GBPNZD', 'NZDCAD', 'AUDCAD', 'AUDCHF',
+    'GBPCHF', 'USDCNH', 'USDHKD', 'USDMXN', 'USDSEK', 'USDSGD', 'USDZAR'
+]
+
 CRYPTO_LIST = ['BTC', 'ETH', 'LTC', 'XRP', 'SOL', 'ADA', 'DOT', 'LINK', 'BNB']
 
 # -------------------- ПОЛУЧЕНИЕ ДАННЫХ --------------------
@@ -128,6 +135,7 @@ def get_market_data(symbol, timeframe, limit=100):
 
         raise Exception("Не удалось получить данные для индекса или сырья")
 
+    # Акции
     if TWELVE_DATA_API_KEY:
         try:
             logger.info(f"Twelve Data для акции {clean}")
@@ -143,11 +151,18 @@ def get_market_data(symbol, timeframe, limit=100):
         except Exception as e:
             logger.warning(f"Yahoo Finance ошибка для {sym}: {e}")
 
+    # Валюты
     if clean in FOREX_LIST:
         if TWELVE_DATA_API_KEY:
             try:
-                logger.info(f"Twelve Data для валюты {clean}")
-                return fetch_twelvedata(clean, timeframe, limit)
+                # Для Twelve Data используем символ с слешем (GBP/JPY)
+                # Формируем из clean: первые 3 буквы + "/" + последние 3
+                if len(clean) == 6:
+                    td_sym = f"{clean[:3]}/{clean[3:]}"
+                else:
+                    td_sym = clean
+                logger.info(f"Twelve Data для валюты {td_sym}")
+                return fetch_twelvedata(td_sym, timeframe, limit)
             except Exception as e:
                 logger.warning(f"Twelve Data ошибка для валюты: {e}")
         yf_symbol = f"{clean}=X"
@@ -440,6 +455,13 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_chat.send_message("⚠️ Ошибка: выберите актив и таймфрейм заново.")
         context.user_data['processing'] = False
         return
+
+    # Важно: если duration уже сохранён, не повторяем выбор
+    if context.user_data.get('duration') == duration:
+        # уже выбрано, ничего не делаем
+        context.user_data['processing'] = False
+        return
+    context.user_data['duration'] = duration
 
     await update.effective_chat.send_message("⏳ Анализирую рынок...")
     try:
