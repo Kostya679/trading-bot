@@ -155,8 +155,6 @@ def get_market_data(symbol, timeframe, limit=100):
     if clean in FOREX_LIST:
         if TWELVE_DATA_API_KEY:
             try:
-                # Для Twelve Data используем символ с слешем (GBP/JPY)
-                # Формируем из clean: первые 3 буквы + "/" + последние 3
                 if len(clean) == 6:
                     td_sym = f"{clean[:3]}/{clean[3:]}"
                 else:
@@ -355,7 +353,7 @@ def build_keyboard(items, back=False, back_data=None, cols=2):
         keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data=back_data or "back")])
     return InlineKeyboardMarkup(keyboard)
 
-# -------------------- ОБРАБОТЧИКИ --------------------
+# -------------------- ОБРАБОТЧИКИ (упрощены, все через edit_message_text) --------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         text = ("🚀 *Торговый бот-ассистент*\n\n"
@@ -376,11 +374,7 @@ async def go(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📈 Акции", callback_data="stocks")],
         [InlineKeyboardButton("📊 Индексы", callback_data="indices")]
     ]
-    try:
-        await query.message.delete()
-    except:
-        pass
-    await update.effective_chat.send_message("Выберите раздел:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text("Выберите раздел:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def section_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -397,14 +391,10 @@ async def section_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif section == "indices":
         items, title = INDICES, "📊 Индексы"
     else:
-        await update.effective_chat.send_message("Ошибка")
+        await query.edit_message_text("Ошибка")
         return
     keyboard = build_keyboard(items, back=True, back_data="go")
-    try:
-        await query.message.delete()
-    except:
-        pass
-    await update.effective_chat.send_message(f"{title} (выберите актив):", reply_markup=keyboard)
+    await query.edit_message_text(f"{title} (выберите актив):", reply_markup=keyboard)
 
 async def asset_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -415,11 +405,7 @@ async def asset_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['asset'] = asset
     text = f"*{asset}*\n\nВыберите таймфрейм:"
     keyboard = build_keyboard(TIMEFRAMES, back=True, back_data="back_to_section")
-    try:
-        await query.message.delete()
-    except:
-        pass
-    await update.effective_chat.send_message(text, parse_mode='Markdown', reply_markup=keyboard)
+    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
 
 async def timeframe_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -430,11 +416,7 @@ async def timeframe_selected(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data['timeframe'] = tf
     text = f"✅ Таймфрейм *{tf}* выбран.\nТеперь выберите время сделки:"
     keyboard = build_keyboard(DURATIONS, back=True, back_data="back_to_asset")
-    try:
-        await query.message.delete()
-    except:
-        pass
-    await update.effective_chat.send_message(text, parse_mode='Markdown', reply_markup=keyboard)
+    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
 
 async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -452,21 +434,15 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asset = context.user_data.get('asset')
     timeframe = context.user_data.get('timeframe')
     if not asset or not timeframe:
-        await update.effective_chat.send_message("⚠️ Ошибка: выберите актив и таймфрейм заново.")
+        await query.edit_message_text("⚠️ Ошибка: выберите актив и таймфрейм заново.")
         context.user_data['processing'] = False
         return
 
-    # Важно: если duration уже сохранён, не повторяем выбор
-    if context.user_data.get('duration') == duration:
-        # уже выбрано, ничего не делаем
-        context.user_data['processing'] = False
-        return
     context.user_data['duration'] = duration
-
-    await update.effective_chat.send_message("⏳ Анализирую рынок...")
+    await query.edit_message_text("⏳ Анализирую рынок...")
     try:
         clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
-        logger.info(f"Пробую получить данные для {clean_asset}, таймфрейм {timeframe}")
+        logger.info(f"Пробую получить данные для {clean_asset}, таймфрейм {timeframe}, duration {duration}")
         df = get_market_data(clean_asset, timeframe, limit=100)
         signal_data = compute_signal(df)
         signal = signal_data['signal']
@@ -483,15 +459,11 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔄 Дай сигнал ещё раз", callback_data="resignal")],
             [InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]
         ]
-        try:
-            await query.message.delete()
-        except:
-            pass
-        await update.effective_chat.send_message(msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text(msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
     except Exception as e:
         logger.error(f"duration error: {e}")
         keyboard = [[InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]]
-        await update.effective_chat.send_message(
+        await query.edit_message_text(
             f"❌ Ошибка: {str(e)}",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
@@ -510,10 +482,10 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     timeframe = context.user_data.get('timeframe')
     duration = context.user_data.get('duration')
     if not asset or not timeframe or not duration:
-        await update.effective_chat.send_message("Ошибка: данные потеряны. Начните заново /start")
+        await query.edit_message_text("Ошибка: данные потеряны. Начните заново /start")
         context.user_data['processing'] = False
         return
-    await update.effective_chat.send_message("⏳ Анализирую рынок...")
+    await query.edit_message_text("⏳ Анализирую рынок...")
     try:
         clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
         df = get_market_data(clean_asset, timeframe, limit=100)
@@ -532,15 +504,11 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔄 Дай сигнал ещё раз", callback_data="resignal")],
             [InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]
         ]
-        try:
-            await query.message.delete()
-        except:
-            pass
-        await update.effective_chat.send_message(msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text(msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
     except Exception as e:
         logger.error(f"resignal error: {e}")
         keyboard = [[InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]]
-        await update.effective_chat.send_message(
+        await query.edit_message_text(
             f"❌ Ошибка: {str(e)}",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
@@ -552,28 +520,16 @@ async def back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     back_to = query.data
     if back_to == "back_to_section":
-        try:
-            await query.message.delete()
-        except:
-            pass
         await go(update, context)
     elif back_to == "back_to_asset":
         asset = context.user_data.get('asset')
         if asset:
-            try:
-                await query.message.delete()
-            except:
-                pass
             await asset_selected(update, context)
         else:
             await go(update, context)
     elif back_to == "go":
         await go(update, context)
     elif back_to == "home":
-        try:
-            await query.message.delete()
-        except:
-            pass
         await go(update, context)
     else:
         await go(update, context)
