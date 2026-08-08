@@ -81,6 +81,10 @@ def get_market_data(symbol, timeframe, limit=100):
     clean = symbol.upper().replace('=X', '').replace('_OTC', '').replace('USDT', '').replace('BUSD', '')
     clean = clean.replace('/', '')
 
+    # Проверка на служебные кнопки
+    if clean in ['BACK_TO_ASSET', 'BACK_TO_SECTION', 'GO', 'HOME']:
+        raise Exception("Выбрана служебная кнопка")
+
     is_crypto = any(clean.startswith(crypto) for crypto in CRYPTO_LIST)
     if is_crypto:
         base = next((c for c in CRYPTO_LIST if clean.startswith(c)), None)
@@ -222,6 +226,15 @@ def fetch_twelvedata(symbol, timeframe, limit):
     if 'values' not in data or len(data['values']) == 0:
         raise Exception("Нет данных от Twelve Data")
     df = pd.DataFrame(data['values'])
+    # Проверяем наличие колонок
+    required = ['open', 'high', 'low', 'close']
+    for col in required:
+        if col not in df.columns:
+            raise Exception(f"Отсутствует колонка {col} в данных Twelve Data")
+    # Если volume отсутствует, создаём колонку с нулями
+    if 'volume' not in df.columns:
+        df['volume'] = 0
+    # Переименовываем
     df = df.rename(columns={'open':'open','high':'high','low':'low','close':'close','volume':'volume'})
     for c in ['open','high','low','close','volume']:
         df[c] = df[c].astype(float)
@@ -353,7 +366,7 @@ def build_keyboard(items, back=False, back_data=None, cols=2):
         keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data=back_data or "back")])
     return InlineKeyboardMarkup(keyboard)
 
-# -------------------- ОБРАБОТЧИКИ (упрощены, все через edit_message_text) --------------------
+# -------------------- ОБРАБОТЧИКИ --------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         text = ("🚀 *Торговый бот-ассистент*\n\n"
@@ -438,6 +451,12 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['processing'] = False
         return
 
+    # Проверяем, что asset не служебный
+    if asset in ['back_to_asset', 'back_to_section', 'go', 'home']:
+        await query.edit_message_text("⚠️ Ошибка: выберите актив заново.")
+        context.user_data['processing'] = False
+        return
+
     context.user_data['duration'] = duration
     await query.edit_message_text("⏳ Анализирую рынок...")
     try:
@@ -483,6 +502,10 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     duration = context.user_data.get('duration')
     if not asset or not timeframe or not duration:
         await query.edit_message_text("Ошибка: данные потеряны. Начните заново /start")
+        context.user_data['processing'] = False
+        return
+    if asset in ['back_to_asset', 'back_to_section', 'go', 'home']:
+        await query.edit_message_text("Ошибка: выберите актив заново.")
         context.user_data['processing'] = False
         return
     await query.edit_message_text("⏳ Анализирую рынок...")
