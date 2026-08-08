@@ -23,7 +23,29 @@ if not BOT_TOKEN:
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# -------------------- КОНФИГУРАЦИЯ АКТИВОВ (все ключи в ВЕРХНЕМ РЕГИСТРЕ) --------------------
+# -------------------- МАППИНГ ТАЙМФРЕЙМОВ ДЛЯ РАЗНЫХ ИСТОЧНИКОВ --------------------
+YFINANCE_INTERVAL_MAP = {
+    '5s': '1m', '10s': '1m', '15s': '1m', '30s': '1m',
+    '1m': '1m', '2m': '1m', '3m': '1m',
+    '5m': '5m', '10m': '15m', '15m': '15m',
+    '30m': '30m', '1h': '1h', '4h': '1h'
+}
+
+TWELVEDATA_INTERVAL_MAP = {
+    '5s': '1min', '10s': '1min', '15s': '1min', '30s': '1min',
+    '1m': '1min', '2m': '1min', '3m': '1min',
+    '5m': '5min', '10m': '15min', '15m': '15min',
+    '30m': '30min', '1h': '1h', '4h': '4h'
+}
+
+ALPHAVANTAGE_INTERVAL_MAP = {
+    '5s': '1min', '10s': '1min', '15s': '1min', '30s': '1min',
+    '1m': '1min', '2m': '1min', '3m': '1min',
+    '5m': '5min', '10m': '15min', '15m': '15min',
+    '30m': '30min', '1h': '60min', '4h': '60min'
+}
+
+# -------------------- КОНФИГУРАЦИЯ АКТИВОВ --------------------
 SYMBOL_CONFIG = {
     "S&P 500": {"twelvedata": "SPX", "yfinance": "^GSPC", "primary": "twelvedata"},
     "NASDAQ": {"twelvedata": "COMP", "yfinance": "^IXIC", "primary": "twelvedata"},
@@ -51,8 +73,7 @@ CRYPTO_LIST = ['BTC', 'ETH', 'LTC', 'XRP', 'SOL', 'ADA', 'DOT', 'LINK', 'BNB']
 def get_market_data(symbol, timeframe, limit=100):
     clean = symbol.upper().replace('=X', '').replace('_OTC', '').replace('USDT', '').replace('BUSD', '')
     clean = clean.replace('/', '')
-    
-    # 1. Криптовалюта → только Binance
+
     is_crypto = any(clean.startswith(crypto) for crypto in CRYPTO_LIST)
     if is_crypto:
         base = next((c for c in CRYPTO_LIST if clean.startswith(c)), None)
@@ -62,13 +83,11 @@ def get_market_data(symbol, timeframe, limit=100):
             return fetch_binance(symbol_binance, timeframe, limit)
         else:
             raise Exception("Не удалось определить криптовалюту")
-    
-    # 2. Индексы и сырьё (проверяем по clean в верхнем регистре)
+
     if clean in SYMBOL_CONFIG:
         cfg = SYMBOL_CONFIG[clean]
         primary = cfg.get('primary', 'twelvedata')
-        
-        # Пробуем первичный источник
+
         if primary == 'twelvedata' and TWELVE_DATA_API_KEY:
             try:
                 td_sym = cfg['twelvedata']
@@ -83,8 +102,7 @@ def get_market_data(symbol, timeframe, limit=100):
                 return fetch_yfinance(yf_sym, timeframe, limit, is_index=True)
             except Exception as e:
                 logger.warning(f"Yahoo Finance primary ошибка: {e}")
-        
-        # Резерв – другой источник
+
         if primary == 'twelvedata' and cfg.get('yfinance'):
             try:
                 yf_sym = cfg['yfinance']
@@ -99,8 +117,7 @@ def get_market_data(symbol, timeframe, limit=100):
                 return fetch_twelvedata(td_sym, timeframe, limit)
             except Exception as e:
                 logger.warning(f"Twelve Data резерв ошибка: {e}")
-        
-        # Если оба не сработали – пробуем Alpha Vantage (если есть ключ)
+
         if ALPHA_VANTAGE_API_KEY:
             try:
                 av_sym = cfg.get('twelvedata', clean)
@@ -108,17 +125,16 @@ def get_market_data(symbol, timeframe, limit=100):
                 return fetch_alphavantage(av_sym, timeframe, limit)
             except Exception as e:
                 logger.warning(f"Alpha Vantage резерв ошибка: {e}")
-        
+
         raise Exception("Не удалось получить данные для индекса или сырья")
-    
-    # 3. Акции → сначала Twelve Data (если есть), затем Yahoo с альтернативами
+
     if TWELVE_DATA_API_KEY:
         try:
             logger.info(f"Twelve Data для акции {clean}")
             return fetch_twelvedata(clean, timeframe, limit)
         except Exception as e:
             logger.warning(f"Twelve Data ошибка для акции: {e}")
-    
+
     yf_symbols = [clean] + STOCK_ALTERNATIVES.get(clean, [])
     for sym in yf_symbols:
         try:
@@ -126,8 +142,7 @@ def get_market_data(symbol, timeframe, limit=100):
             return fetch_yfinance(sym, timeframe, limit)
         except Exception as e:
             logger.warning(f"Yahoo Finance ошибка для {sym}: {e}")
-    
-    # 4. Валюты → Twelve Data (если есть), затем Yahoo с =X
+
     if clean in FOREX_LIST:
         if TWELVE_DATA_API_KEY:
             try:
@@ -141,14 +156,14 @@ def get_market_data(symbol, timeframe, limit=100):
             return fetch_yfinance(yf_symbol, timeframe, limit)
         except Exception as e:
             logger.warning(f"Yahoo Finance ошибка: {e}")
-    
+
     raise Exception("Не удалось получить данные ни из одного источника")
 
 def fetch_yfinance(symbol, timeframe, limit, is_index=False):
-    time.sleep(4)
-    interval = timeframe
-    if interval == '4h':
+    interval = YFINANCE_INTERVAL_MAP.get(timeframe, timeframe)
+    if timeframe == '4h':
         interval = '1h'
+    time.sleep(4)
     ticker = yf.Ticker(symbol)
     df = ticker.history(period='7d', interval=interval)
     if df.empty:
@@ -159,23 +174,34 @@ def fetch_yfinance(symbol, timeframe, limit, is_index=False):
     return df[['Open','High','Low','Close','Volume']].rename(columns={'Open':'open','High':'high','Low':'low','Close':'close','Volume':'volume'})
 
 def fetch_binance(symbol, timeframe, limit):
-    try:
-        from binance.client import Client
-        client = Client()
-        interval_map = {'1m':Client.KLINE_INTERVAL_1MINUTE,'5m':Client.KLINE_INTERVAL_5MINUTE,'15m':Client.KLINE_INTERVAL_15MINUTE,'30m':Client.KLINE_INTERVAL_30MINUTE,'1h':Client.KLINE_INTERVAL_1HOUR,'4h':Client.KLINE_INTERVAL_4HOUR,'1d':Client.KLINE_INTERVAL_1DAY}
-        klines = client.get_klines(symbol=symbol.upper(), interval=interval_map.get(timeframe, Client.KLINE_INTERVAL_5MINUTE), limit=limit)
-        if not klines:
-            raise Exception("Нет данных от Binance")
-        df = pd.DataFrame(klines, columns=['timestamp','open','high','low','close','volume','ct','qav','trades','tbbav','tbqav','ignore'])
-        for c in ['open','high','low','close','volume']:
-            df[c] = df[c].astype(float)
-        return df[['open','high','low','close','volume']]
-    except Exception as e:
-        raise Exception(f"Ошибка Binance: {e}")
+    from binance.client import Client
+    client = Client()
+    binance_interval_map = {
+        '5s': Client.KLINE_INTERVAL_1MINUTE,
+        '10s': Client.KLINE_INTERVAL_1MINUTE,
+        '15s': Client.KLINE_INTERVAL_1MINUTE,
+        '30s': Client.KLINE_INTERVAL_1MINUTE,
+        '1m': Client.KLINE_INTERVAL_1MINUTE,
+        '2m': Client.KLINE_INTERVAL_1MINUTE,
+        '3m': Client.KLINE_INTERVAL_1MINUTE,
+        '5m': Client.KLINE_INTERVAL_5MINUTE,
+        '10m': Client.KLINE_INTERVAL_15MINUTE,
+        '15m': Client.KLINE_INTERVAL_15MINUTE,
+        '30m': Client.KLINE_INTERVAL_30MINUTE,
+        '1h': Client.KLINE_INTERVAL_1HOUR,
+        '4h': Client.KLINE_INTERVAL_4HOUR
+    }
+    interval = binance_interval_map.get(timeframe, Client.KLINE_INTERVAL_5MINUTE)
+    klines = client.get_klines(symbol=symbol.upper(), interval=interval, limit=limit)
+    if not klines:
+        raise Exception("Нет данных от Binance")
+    df = pd.DataFrame(klines, columns=['timestamp','open','high','low','close','volume','ct','qav','trades','tbbav','tbqav','ignore'])
+    for c in ['open','high','low','close','volume']:
+        df[c] = df[c].astype(float)
+    return df[['open','high','low','close','volume']]
 
 def fetch_twelvedata(symbol, timeframe, limit):
-    interval_map = {'1m':'1min','5m':'5min','15m':'15min','30m':'30min','1h':'1h','4h':'4h','1d':'1day'}
-    interval = interval_map.get(timeframe, '5min')
+    interval = TWELVEDATA_INTERVAL_MAP.get(timeframe, '5min')
     url = "https://api.twelvedata.com/time_series"
     params = {'symbol':symbol, 'interval':interval, 'outputsize':limit, 'apikey':TWELVE_DATA_API_KEY}
     resp = requests.get(url, params=params, timeout=10)
@@ -190,8 +216,7 @@ def fetch_twelvedata(symbol, timeframe, limit):
     return df[['open','high','low','close','volume']]
 
 def fetch_alphavantage(symbol, timeframe, limit):
-    interval_map = {'1m':'1min','5m':'5min','15m':'15min','30m':'30min','1h':'60min','4h':'60min','1d':'daily'}
-    interval = interval_map.get(timeframe, '5min')
+    interval = ALPHAVANTAGE_INTERVAL_MAP.get(timeframe, '5min')
     url = f"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={symbol}&interval={interval}&apikey={ALPHA_VANTAGE_API_KEY}&outputsize=full"
     resp = requests.get(url, timeout=10)
     data = resp.json()
@@ -290,7 +315,7 @@ def compute_signal(df):
         'ADX':adx, 'Last_Close':last
     }}
 
-# -------------------- МЕНЮ И КНОПКИ (без изменений) --------------------
+# -------------------- МЕНЮ И КНОПКИ --------------------
 CURRENCIES = ["AUD/USD OTC","EUR/USD OTC","EUR/RUB OTC","GBP/JPY OTC",
               "USD/CAD OTC","USD/CHF OTC","USD/JPY OTC","GBP/USD OTC"]
 CRYPTO = ["BTC/USD OTC","ETH/USD OTC","LTC/USD OTC","XRP/USD OTC","SOL/USD OTC"]
@@ -315,7 +340,7 @@ def build_keyboard(items, back=False, back_data=None, cols=2):
         keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data=back_data or "back")])
     return InlineKeyboardMarkup(keyboard)
 
-# -------------------- ОБРАБОТЧИКИ (без изменений) --------------------
+# -------------------- ОБРАБОТЧИКИ --------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         text = ("🚀 *Торговый бот-ассистент*\n\n"
