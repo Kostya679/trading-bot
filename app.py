@@ -88,12 +88,40 @@ def get_market_data(symbol, timeframe, limit=100):
     is_crypto = any(clean.startswith(crypto) for crypto in CRYPTO_LIST)
     if is_crypto:
         base = next((c for c in CRYPTO_LIST if clean.startswith(c)), None)
-        if base:
-            symbol_binance = f"{base}USDT"
-            logger.info(f"Крипто: {symbol_binance} через Binance")
-            return fetch_binance(symbol_binance, timeframe, limit)
-        else:
+        if not base:
             raise Exception("Не удалось определить криптовалюту")
+
+        errors = []
+        # 1) Binance
+        try:
+            symbol_binance = f"{base}USDT"
+            logger.info(f"Крипто: попытка Binance для {symbol_binance}")
+            return fetch_binance(symbol_binance, timeframe, limit)
+        except Exception as e:
+            errors.append(f"Binance: {e}")
+            logger.warning(f"Binance ошибка: {e}")
+            time.sleep(3)  # пауза перед следующим источником
+
+        # 2) Twelve Data (если есть ключ)
+        if TWELVE_DATA_API_KEY:
+            try:
+                td_sym = f"{base}/USD" if base in ['BTC', 'ETH', 'LTC', 'XRP'] else clean
+                logger.info(f"Крипто: попытка Twelve Data для {td_sym}")
+                return fetch_twelvedata(td_sym, timeframe, limit)
+            except Exception as e:
+                errors.append(f"Twelve Data: {e}")
+                logger.warning(f"Twelve Data ошибка: {e}")
+
+        # 3) Yahoo Finance
+        yf_symbol = f"{base}-USD"
+        try:
+            logger.info(f"Крипто: попытка Yahoo Finance для {yf_symbol}")
+            return fetch_yfinance(yf_symbol, timeframe, limit)
+        except Exception as e:
+            errors.append(f"Yahoo: {e}")
+            logger.warning(f"Yahoo Finance ошибка: {e}")
+
+        raise Exception(f"Не удалось получить данные для криптовалюты {clean}: " + "; ".join(errors))
 
     if clean in SYMBOL_CONFIG:
         cfg = SYMBOL_CONFIG[clean]
@@ -114,6 +142,7 @@ def get_market_data(symbol, timeframe, limit=100):
             except Exception as e:
                 logger.warning(f"Yahoo Finance primary ошибка: {e}")
 
+        # Резерв
         if primary == 'twelvedata' and cfg.get('yfinance'):
             try:
                 yf_sym = cfg['yfinance']
@@ -191,6 +220,7 @@ def fetch_yfinance(symbol, timeframe, limit, is_index=False):
     return df[['Open','High','Low','Close','Volume']].rename(columns={'Open':'open','High':'high','Low':'low','Close':'close','Volume':'volume'})
 
 def fetch_binance(symbol, timeframe, limit):
+    time.sleep(1)  # задержка, чтобы не банили
     from binance.client import Client
     client = Client()
     binance_interval_map = {
@@ -226,15 +256,12 @@ def fetch_twelvedata(symbol, timeframe, limit):
     if 'values' not in data or len(data['values']) == 0:
         raise Exception("Нет данных от Twelve Data")
     df = pd.DataFrame(data['values'])
-    # Проверяем наличие колонок
     required = ['open', 'high', 'low', 'close']
     for col in required:
         if col not in df.columns:
             raise Exception(f"Отсутствует колонка {col} в данных Twelve Data")
-    # Если volume отсутствует, создаём колонку с нулями
     if 'volume' not in df.columns:
         df['volume'] = 0
-    # Переименовываем
     df = df.rename(columns={'open':'open','high':'high','low':'low','close':'close','volume':'volume'})
     for c in ['open','high','low','close','volume']:
         df[c] = df[c].astype(float)
@@ -256,7 +283,7 @@ def fetch_alphavantage(symbol, timeframe, limit):
     df = df.iloc[-limit:]
     return df
 
-# -------------------- РАСЧЁТ СИГНАЛА --------------------
+# -------------------- РАСЧЁТ СИГНАЛА (без изменений) --------------------
 def compute_signal(df):
     if df.empty or len(df) < 30:
         return {'signal':'HOLD','reason':'Недостаточно данных','indicators':{}}
@@ -451,7 +478,6 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['processing'] = False
         return
 
-    # Проверяем, что asset не служебный
     if asset in ['back_to_asset', 'back_to_section', 'go', 'home']:
         await query.edit_message_text("⚠️ Ошибка: выберите актив заново.")
         context.user_data['processing'] = False
