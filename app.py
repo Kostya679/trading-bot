@@ -11,7 +11,6 @@ import ta
 import requests
 from flask import Flask
 import threading
-from telegram.error import BadRequest
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -24,57 +23,26 @@ if not BOT_TOKEN:
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# -------------------- МАППИНГ ТАЙМФРЕЙМОВ ДЛЯ РАЗНЫХ ИСТОЧНИКОВ --------------------
-# Yahoo Finance поддерживает: 1m, 2m, 5m, 15m, 30m, 60m, 1h, 4h, 1d, 5d, 1wk, 1mo, 3mo
+# -------------------- МАППИНГ ТАЙМФРЕЙМОВ --------------------
 YFINANCE_INTERVAL_MAP = {
     '5s': '1m', '10s': '1m', '15s': '1m', '30s': '1m',
-    '1m': '1m', '2m': '2m', '3m': '5m', '4m': '5m',
-    '5m': '5m', '6m': '15m', '8m': '15m', '10m': '15m',
-    '15m': '15m', '20m': '30m', '25m': '30m', '30m': '30m',
-    '45m': '1h', '1h': '1h', '2h': '1h', '3h': '1h', '4h': '1h'
+    '1m': '1m', '2m': '1m', '3m': '1m',
+    '5m': '5m', '10m': '15m', '15m': '15m',
+    '30m': '30m', '1h': '1h', '4h': '1h'
 }
 
-# Twelve Data поддерживает: 1min, 5min, 15min, 30min, 1h, 4h, 1day
 TWELVEDATA_INTERVAL_MAP = {
     '5s': '1min', '10s': '1min', '15s': '1min', '30s': '1min',
-    '1m': '1min', '2m': '1min', '3m': '5min', '4m': '5min',
-    '5m': '5min', '6m': '15min', '8m': '15min', '10m': '15min',
-    '15m': '15min', '20m': '30min', '25m': '30min', '30m': '30min',
-    '45m': '1h', '1h': '1h', '2h': '4h', '3h': '4h', '4h': '4h'
+    '1m': '1min', '2m': '1min', '3m': '1min',
+    '5m': '5min', '10m': '15min', '15m': '15min',
+    '30m': '30min', '1h': '1h', '4h': '4h'
 }
 
-# Alpha Vantage поддерживает: 1min, 5min, 15min, 30min, 60min
 ALPHAVANTAGE_INTERVAL_MAP = {
     '5s': '1min', '10s': '1min', '15s': '1min', '30s': '1min',
-    '1m': '1min', '2m': '1min', '3m': '5min', '4m': '5min',
-    '5m': '5min', '6m': '15min', '8m': '15min', '10m': '15min',
-    '15m': '15min', '20m': '30min', '25m': '30min', '30m': '30min',
-    '45m': '60min', '1h': '60min', '2h': '60min', '3h': '60min', '4h': '60min'
-}
-
-# Binance поддерживает: 1m, 5m, 15m, 30m, 1h, 4h, 1d
-BINANCE_INTERVAL_MAP = {
-    '5s': Client.KLINE_INTERVAL_1MINUTE,
-    '10s': Client.KLINE_INTERVAL_1MINUTE,
-    '15s': Client.KLINE_INTERVAL_1MINUTE,
-    '30s': Client.KLINE_INTERVAL_1MINUTE,
-    '1m': Client.KLINE_INTERVAL_1MINUTE,
-    '2m': Client.KLINE_INTERVAL_1MINUTE,
-    '3m': Client.KLINE_INTERVAL_5MINUTE,
-    '4m': Client.KLINE_INTERVAL_5MINUTE,
-    '5m': Client.KLINE_INTERVAL_5MINUTE,
-    '6m': Client.KLINE_INTERVAL_15MINUTE,
-    '8m': Client.KLINE_INTERVAL_15MINUTE,
-    '10m': Client.KLINE_INTERVAL_15MINUTE,
-    '15m': Client.KLINE_INTERVAL_15MINUTE,
-    '20m': Client.KLINE_INTERVAL_30MINUTE,
-    '25m': Client.KLINE_INTERVAL_30MINUTE,
-    '30m': Client.KLINE_INTERVAL_30MINUTE,
-    '45m': Client.KLINE_INTERVAL_1HOUR,
-    '1h': Client.KLINE_INTERVAL_1HOUR,
-    '2h': Client.KLINE_INTERVAL_4HOUR,
-    '3h': Client.KLINE_INTERVAL_4HOUR,
-    '4h': Client.KLINE_INTERVAL_4HOUR
+    '1m': '1min', '2m': '1min', '3m': '1min',
+    '5m': '5min', '10m': '15min', '15m': '15min',
+    '30m': '30min', '1h': '60min', '4h': '60min'
 }
 
 # -------------------- КОНФИГУРАЦИЯ АКТИВОВ --------------------
@@ -98,6 +66,7 @@ STOCK_ALTERNATIVES = {
     "NVDA": ["NVDA"]
 }
 
+# Расширенный список валютных пар (все, что есть в меню CURRENCIES)
 FOREX_LIST = [
     'AUDUSD', 'EURUSD', 'EURGBP', 'EURJPY', 'GBPJPY', 'USDCAD', 'USDCHF',
     'USDJPY', 'GBPUSD', 'NZDUSD', 'EURCHF', 'GBPAUD', 'AUDJPY', 'CADJPY',
@@ -112,29 +81,47 @@ def get_market_data(symbol, timeframe, limit=100):
     clean = symbol.upper().replace('=X', '').replace('_OTC', '').replace('USDT', '').replace('BUSD', '')
     clean = clean.replace('/', '')
 
+    # Проверка на служебные кнопки
     if clean in ['BACK_TO_ASSET', 'BACK_TO_SECTION', 'GO', 'HOME']:
         raise Exception("Выбрана служебная кнопка")
 
     is_crypto = any(clean.startswith(crypto) for crypto in CRYPTO_LIST)
     if is_crypto:
         base = next((c for c in CRYPTO_LIST if clean.startswith(c)), None)
-        if base:
-            # Пробуем Binance (с задержкой)
+        if not base:
+            raise Exception("Не удалось определить криптовалюту")
+
+        errors = []
+        # 1) Binance
+        try:
+            symbol_binance = f"{base}USDT"
+            logger.info(f"Крипто: попытка Binance для {symbol_binance}")
+            return fetch_binance(symbol_binance, timeframe, limit)
+        except Exception as e:
+            errors.append(f"Binance: {e}")
+            logger.warning(f"Binance ошибка: {e}")
+            time.sleep(3)  # пауза перед следующим источником
+
+        # 2) Twelve Data (если есть ключ)
+        if TWELVE_DATA_API_KEY:
             try:
-                time.sleep(0.5)
-                symbol_binance = f"{base}USDT"
-                logger.info(f"Крипто: {symbol_binance} через Binance")
-                return fetch_binance(symbol_binance, timeframe, limit)
+                td_sym = f"{base}/USD" if base in ['BTC', 'ETH', 'LTC', 'XRP'] else clean
+                logger.info(f"Крипто: попытка Twelve Data для {td_sym}")
+                return fetch_twelvedata(td_sym, timeframe, limit)
             except Exception as e:
-                logger.warning(f"Binance ошибка: {e}")
-                # Резерв Yahoo Finance
-                yf_symbol = f"{base}-USD"
-                logger.info(f"Резерв: Yahoo Finance для {yf_symbol}")
-                try:
-                    return fetch_yfinance(yf_symbol, timeframe, limit)
-                except Exception as e2:
-                    logger.warning(f"Yahoo Finance резерв ошибка: {e2}")
-        raise Exception("Не удалось получить данные для криптовалюты")
+                errors.append(f"Twelve Data: {e}")
+                logger.warning(f"Twelve Data ошибка: {e}")
+
+        # 3) Yahoo Finance
+        yf_symbol = f"{base}-USD"
+        try:
+            logger.info(f"Крипто: попытка Yahoo Finance для {yf_symbol}")
+            return fetch_yfinance(yf_symbol, timeframe, limit)
+        except Exception as e:
+            errors.append(f"Yahoo: {e}")
+            logger.warning(f"Yahoo Finance ошибка: {e}")
+
+        raise Exception(f"Не удалось получить данные для криптовалюты {clean}: " + "; ".join(errors))
 
     if clean in SYMBOL_CONFIG:
         cfg = SYMBOL_CONFIG[clean]
@@ -155,6 +142,7 @@ def get_market_data(symbol, timeframe, limit=100):
             except Exception as e:
                 logger.warning(f"Yahoo Finance primary ошибка: {e}")
 
+        # Резерв
         if primary == 'twelvedata' and cfg.get('yfinance'):
             try:
                 yf_sym = cfg['yfinance']
@@ -232,9 +220,25 @@ def fetch_yfinance(symbol, timeframe, limit, is_index=False):
     return df[['Open','High','Low','Close','Volume']].rename(columns={'Open':'open','High':'high','Low':'low','Close':'close','Volume':'volume'})
 
 def fetch_binance(symbol, timeframe, limit):
+    time.sleep(1)  # задержка, чтобы не банили
     from binance.client import Client
     client = Client()
-    interval = BINANCE_INTERVAL_MAP.get(timeframe, Client.KLINE_INTERVAL_5MINUTE)
+    binance_interval_map = {
+        '5s': Client.KLINE_INTERVAL_1MINUTE,
+        '10s': Client.KLINE_INTERVAL_1MINUTE,
+        '15s': Client.KLINE_INTERVAL_1MINUTE,
+        '30s': Client.KLINE_INTERVAL_1MINUTE,
+        '1m': Client.KLINE_INTERVAL_1MINUTE,
+        '2m': Client.KLINE_INTERVAL_1MINUTE,
+        '3m': Client.KLINE_INTERVAL_1MINUTE,
+        '5m': Client.KLINE_INTERVAL_5MINUTE,
+        '10m': Client.KLINE_INTERVAL_15MINUTE,
+        '15m': Client.KLINE_INTERVAL_15MINUTE,
+        '30m': Client.KLINE_INTERVAL_30MINUTE,
+        '1h': Client.KLINE_INTERVAL_1HOUR,
+        '4h': Client.KLINE_INTERVAL_4HOUR
+    }
+    interval = binance_interval_map.get(timeframe, Client.KLINE_INTERVAL_5MINUTE)
     klines = client.get_klines(symbol=symbol.upper(), interval=interval, limit=limit)
     if not klines:
         raise Exception("Нет данных от Binance")
@@ -279,7 +283,7 @@ def fetch_alphavantage(symbol, timeframe, limit):
     df = df.iloc[-limit:]
     return df
 
-# -------------------- РАСЧЁТ СИГНАЛА --------------------
+# -------------------- РАСЧЁТ СИГНАЛА (без изменений) --------------------
 def compute_signal(df):
     if df.empty or len(df) < 30:
         return {'signal':'HOLD','reason':'Недостаточно данных','indicators':{}}
@@ -441,13 +445,7 @@ async def asset_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['asset'] = asset
     text = f"*{asset}*\n\nВыберите таймфрейм:"
     keyboard = build_keyboard(TIMEFRAMES, back=True, back_data="back_to_section")
-    try:
-        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
-    except BadRequest as e:
-        if "Message is not modified" in str(e):
-            pass
-        else:
-            raise
+    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
 
 async def timeframe_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -458,13 +456,7 @@ async def timeframe_selected(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data['timeframe'] = tf
     text = f"✅ Таймфрейм *{tf}* выбран.\nТеперь выберите время сделки:"
     keyboard = build_keyboard(DURATIONS, back=True, back_data="back_to_asset")
-    try:
-        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
-    except BadRequest as e:
-        if "Message is not modified" in str(e):
-            pass
-        else:
-            raise
+    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
 
 async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -491,12 +483,7 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['processing'] = False
         return
 
-    # Если уже выбрано то же время – не обновляем
-    if context.user_data.get('duration') == duration:
-        context.user_data['processing'] = False
-        return
     context.user_data['duration'] = duration
-
     await query.edit_message_text("⏳ Анализирую рынок...")
     try:
         clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
@@ -517,26 +504,14 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔄 Дай сигнал ещё раз", callback_data="resignal")],
             [InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]
         ]
-        try:
-            await query.edit_message_text(msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
-        except BadRequest as e:
-            if "Message is not modified" in str(e):
-                pass
-            else:
-                raise
+        await query.edit_message_text(msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
     except Exception as e:
         logger.error(f"duration error: {e}")
         keyboard = [[InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]]
-        try:
-            await query.edit_message_text(
-                f"❌ Ошибка: {str(e)}",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-        except BadRequest as ex:
-            if "Message is not modified" in str(ex):
-                pass
-            else:
-                raise
+        await query.edit_message_text(
+            f"❌ Ошибка: {str(e)}",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
     finally:
         context.user_data['processing'] = False
 
@@ -578,26 +553,14 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔄 Дай сигнал ещё раз", callback_data="resignal")],
             [InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]
         ]
-        try:
-            await query.edit_message_text(msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
-        except BadRequest as e:
-            if "Message is not modified" in str(e):
-                pass
-            else:
-                raise
+        await query.edit_message_text(msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
     except Exception as e:
         logger.error(f"resignal error: {e}")
         keyboard = [[InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]]
-        try:
-            await query.edit_message_text(
-                f"❌ Ошибка: {str(e)}",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-        except BadRequest as ex:
-            if "Message is not modified" in str(ex):
-                pass
-            else:
-                raise
+        await query.edit_message_text(
+            f"❌ Ошибка: {str(e)}",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
     finally:
         context.user_data['processing'] = False
 
