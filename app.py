@@ -25,8 +25,7 @@ if not BOT_TOKEN:
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ==================== МАППИНГ ТАЙМФРЕЙМОВ ДЛЯ РАЗНЫХ ИСТОЧНИКОВ ====================
-# Все возможные интервалы, которые могут встретиться в DURATIONS
+# ==================== МАППИНГ ТАЙМФРЕЙМОВ ====================
 YFINANCE_INTERVAL_MAP = {
     '5s': '1m', '10s': '1m', '15s': '1m', '30s': '1m',
     '1m': '1m', '2m': '2m', '3m': '5m', '4m': '5m',
@@ -43,14 +42,6 @@ TWELVEDATA_INTERVAL_MAP = {
     '45m': '1h', '1h': '1h', '2h': '4h', '3h': '4h', '4h': '4h'
 }
 
-ALPHAVANTAGE_INTERVAL_MAP = {
-    '5s': '1min', '10s': '1min', '15s': '1min', '30s': '1min',
-    '1m': '1min', '2m': '1min', '3m': '5min', '4m': '5min',
-    '5m': '5min', '6m': '15min', '8m': '15min', '10m': '15min',
-    '15m': '15min', '20m': '30min', '25m': '30min', '30m': '30min',
-    '45m': '60min', '1h': '60min', '2h': '60min', '3h': '60min', '4h': '60min'
-}
-
 BINANCE_INTERVAL_MAP = {
     '5s': '1m', '10s': '1m', '15s': '1m', '30s': '1m',
     '1m': '1m', '2m': '1m', '3m': '5m', '4m': '5m',
@@ -59,12 +50,8 @@ BINANCE_INTERVAL_MAP = {
     '45m': '1h', '1h': '1h', '2h': '4h', '3h': '4h', '4h': '4h'
 }
 
-# ==================== АВТОМАТИЧЕСКИЙ ВЫБОР ТАЙМФРЕЙМА ====================
+# ==================== АВТО-ВЫБОР ТАЙМФРЕЙМА И ЛИМИТА ====================
 def get_timeframe_from_duration(duration):
-    """
-    Определяет таймфрейм для анализа на основе времени сделки.
-    Для коротких сделок (сек, до 5 мин) используем 1m, для средних (до 30 мин) – 5m, для длинных – 15m или 1h.
-    """
     if duration.endswith('s'):
         seconds = int(duration[:-1])
     elif duration.endswith('m'):
@@ -73,20 +60,18 @@ def get_timeframe_from_duration(duration):
         seconds = int(duration[:-1]) * 3600
     else:
         seconds = 60
-
-    if seconds <= 60:      # до 1 мин
+    if seconds <= 60:
         return '1m'
-    elif seconds <= 300:   # до 5 мин
+    elif seconds <= 300:
         return '5m'
-    elif seconds <= 900:   # до 15 мин
+    elif seconds <= 900:
         return '15m'
-    elif seconds <= 3600:  # до 1 часа
+    elif seconds <= 3600:
         return '1h'
     else:
-        return '1h'        # для 2h, 3h, 4h используем 1h (но можно и 4h, если нужно)
+        return '1h'
 
 def get_candle_limit(timeframe):
-    """Возвращает количество свечей для запроса в зависимости от таймфрейма"""
     if timeframe == '1m':
         return 500
     elif timeframe == '5m':
@@ -128,15 +113,14 @@ FOREX_LIST = [
 
 CRYPTO_LIST = ['BTC', 'ETH', 'LTC', 'XRP', 'SOL', 'ADA', 'DOT', 'LINK', 'BNB']
 
-# ==================== ФУНКЦИИ ПОЛУЧЕНИЯ ДАННЫХ (С УВЕЛИЧЕННЫМ ЛИМИТОМ) ====================
+# ==================== ФУНКЦИИ ПОЛУЧЕНИЯ ДАННЫХ ====================
 def get_market_data(symbol, timeframe, limit=300):
     clean = symbol.upper().replace('=X', '').replace('_OTC', '').replace('USDT', '').replace('BUSD', '')
     clean = clean.replace('/', '')
-
     if clean in ['BACK_TO_ASSET', 'BACK_TO_SECTION', 'GO', 'HOME']:
-        raise Exception("Выбрана служебная кнопка")
+        raise Exception("Служебная кнопка")
 
-    is_crypto = any(clean.startswith(crypto) for crypto in CRYPTO_LIST)
+    is_crypto = any(clean.startswith(c) for c in CRYPTO_LIST)
     if is_crypto:
         base = next((c for c in CRYPTO_LIST if clean.startswith(c)), None)
         if base:
@@ -146,94 +130,70 @@ def get_market_data(symbol, timeframe, limit=300):
                 return fetch_binance(symbol_binance, timeframe, limit)
             except Exception as e:
                 logger.warning(f"Binance ошибка: {e}")
-                yf_symbol = f"{base}-USD"
-                logger.info(f"Резерв: Yahoo Finance для {yf_symbol}")
+                yf_sym = f"{base}-USD"
                 try:
-                    return fetch_yfinance(yf_symbol, timeframe, limit)
-                except Exception as e2:
-                    logger.warning(f"Yahoo Finance резерв ошибка: {e2}")
-        raise Exception("Не удалось получить данные для криптовалюты")
+                    return fetch_yfinance(yf_sym, timeframe, limit)
+                except:
+                    pass
+        raise Exception("Нет данных для криптовалюты")
 
     if clean in SYMBOL_CONFIG:
         cfg = SYMBOL_CONFIG[clean]
         primary = cfg.get('primary', 'twelvedata')
-
         if primary == 'twelvedata' and TWELVE_DATA_API_KEY:
             try:
                 td_sym = cfg['twelvedata']
-                logger.info(f"Twelve Data (primary) для {td_sym}")
                 return fetch_twelvedata(td_sym, timeframe, limit)
             except Exception as e:
                 logger.warning(f"Twelve Data primary ошибка: {e}")
-        elif primary == 'yfinance':
+        if primary == 'yfinance':
             yf_sym = cfg['yfinance']
             try:
-                logger.info(f"Yahoo Finance (primary) для {yf_sym}")
                 return fetch_yfinance(yf_sym, timeframe, limit, is_index=True)
             except Exception as e:
-                logger.warning(f"Yahoo Finance primary ошибка: {e}")
-
+                logger.warning(f"Yahoo primary ошибка: {e}")
         if primary == 'twelvedata' and cfg.get('yfinance'):
             try:
                 yf_sym = cfg['yfinance']
-                logger.info(f"Yahoo Finance (резерв) для {yf_sym}")
                 return fetch_yfinance(yf_sym, timeframe, limit, is_index=True)
             except Exception as e:
-                logger.warning(f"Yahoo Finance резерв ошибка: {e}")
-        elif primary == 'yfinance' and TWELVE_DATA_API_KEY and cfg.get('twelvedata'):
-            try:
-                td_sym = cfg['twelvedata']
-                logger.info(f"Twelve Data (резерв) для {td_sym}")
-                return fetch_twelvedata(td_sym, timeframe, limit)
-            except Exception as e:
-                logger.warning(f"Twelve Data резерв ошибка: {e}")
-
+                logger.warning(f"Yahoo резерв ошибка: {e}")
         if ALPHA_VANTAGE_API_KEY:
             try:
                 av_sym = cfg.get('twelvedata', clean)
-                logger.info(f"Alpha Vantage (резерв) для {av_sym}")
                 return fetch_alphavantage(av_sym, timeframe, limit)
             except Exception as e:
-                logger.warning(f"Alpha Vantage резерв ошибка: {e}")
-
-        raise Exception("Не удалось получить данные для индекса или сырья")
+                logger.warning(f"Alpha Vantage ошибка: {e}")
+        raise Exception("Нет данных для индекса/сырья")
 
     # Акции
     if TWELVE_DATA_API_KEY:
         try:
-            logger.info(f"Twelve Data для акции {clean}")
             return fetch_twelvedata(clean, timeframe, limit)
         except Exception as e:
-            logger.warning(f"Twelve Data ошибка для акции: {e}")
-
+            logger.warning(f"Twelve Data ошибка акции: {e}")
     yf_symbols = [clean] + STOCK_ALTERNATIVES.get(clean, [])
     for sym in yf_symbols:
         try:
-            logger.info(f"Yahoo Finance для {sym}")
             return fetch_yfinance(sym, timeframe, limit)
         except Exception as e:
-            logger.warning(f"Yahoo Finance ошибка для {sym}: {e}")
+            logger.warning(f"Yahoo ошибка {sym}: {e}")
 
     # Валюты
     if clean in FOREX_LIST:
         if TWELVE_DATA_API_KEY:
             try:
-                if len(clean) == 6:
-                    td_sym = f"{clean[:3]}/{clean[3:]}"
-                else:
-                    td_sym = clean
-                logger.info(f"Twelve Data для валюты {td_sym}")
+                td_sym = f"{clean[:3]}/{clean[3:]}" if len(clean)==6 else clean
                 return fetch_twelvedata(td_sym, timeframe, limit)
             except Exception as e:
-                logger.warning(f"Twelve Data ошибка для валюты: {e}")
-        yf_symbol = f"{clean}=X"
-        logger.info(f"Yahoo Finance для валюты {yf_symbol}")
+                logger.warning(f"Twelve Data валюты ошибка: {e}")
+        yf_sym = f"{clean}=X"
         try:
-            return fetch_yfinance(yf_symbol, timeframe, limit)
+            return fetch_yfinance(yf_sym, timeframe, limit)
         except Exception as e:
-            logger.warning(f"Yahoo Finance ошибка: {e}")
+            logger.warning(f"Yahoo валюты ошибка: {e}")
 
-    raise Exception("Не удалось получить данные ни из одного источника")
+    raise Exception("Нет данных")
 
 def fetch_yfinance(symbol, timeframe, limit, is_index=False):
     interval = YFINANCE_INTERVAL_MAP.get(timeframe, timeframe)
@@ -243,7 +203,7 @@ def fetch_yfinance(symbol, timeframe, limit, is_index=False):
     ticker = yf.Ticker(symbol)
     df = ticker.history(period='30d', interval=interval)
     if df.empty:
-        raise Exception("Нет данных от Yahoo Finance")
+        raise Exception("Нет данных Yahoo")
     if timeframe == '4h':
         df = df.resample('4h').agg({'Open':'first','High':'max','Low':'min','Close':'last','Volume':'sum'}).dropna()
     df = df.iloc[-limit:]
@@ -257,7 +217,7 @@ def fetch_binance(symbol, timeframe, limit):
         interval = '4h'
     klines = client.get_klines(symbol=symbol.upper(), interval=interval, limit=limit)
     if not klines:
-        raise Exception("Нет данных от Binance")
+        raise Exception("Нет данных Binance")
     df = pd.DataFrame(klines, columns=['timestamp','open','high','low','close','volume','ct','qav','trades','tbbav','tbqav','ignore'])
     for c in ['open','high','low','close','volume']:
         df[c] = df[c].astype(float)
@@ -270,12 +230,11 @@ def fetch_twelvedata(symbol, timeframe, limit):
     resp = requests.get(url, params=params, timeout=15)
     data = resp.json()
     if 'values' not in data or len(data['values']) == 0:
-        raise Exception("Нет данных от Twelve Data")
+        raise Exception("Нет данных Twelve Data")
     df = pd.DataFrame(data['values'])
-    required = ['open', 'high', 'low', 'close']
-    for col in required:
+    for col in ['open','high','low','close']:
         if col not in df.columns:
-            raise Exception(f"Отсутствует колонка {col} в данных Twelve Data")
+            raise Exception(f"Нет колонки {col}")
     if 'volume' not in df.columns:
         df['volume'] = 0
     df = df.rename(columns={'open':'open','high':'high','low':'low','close':'close','volume':'volume'})
@@ -285,12 +244,16 @@ def fetch_twelvedata(symbol, timeframe, limit):
     return df[['open','high','low','close','volume']]
 
 def fetch_alphavantage(symbol, timeframe, limit):
-    interval = ALPHAVANTAGE_INTERVAL_MAP.get(timeframe, '5min')
+    interval = {'5s':'1min','10s':'1min','15s':'1min','30s':'1min',
+                '1m':'1min','2m':'1min','3m':'5min','4m':'5min',
+                '5m':'5min','6m':'15min','8m':'15min','10m':'15min',
+                '15m':'15min','20m':'30min','25m':'30min','30m':'30min',
+                '45m':'60min','1h':'60min','2h':'60min','3h':'60min','4h':'60min'}.get(timeframe, '5min')
     url = f"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={symbol}&interval={interval}&apikey={ALPHA_VANTAGE_API_KEY}&outputsize=full"
     resp = requests.get(url, timeout=15)
     data = resp.json()
     if 'Time Series' not in data:
-        raise Exception("Нет данных от Alpha Vantage")
+        raise Exception("Нет данных Alpha Vantage")
     df = pd.DataFrame.from_dict(data['Time Series'], orient='index')
     df.index = pd.to_datetime(df.index)
     df = df.sort_index()
@@ -299,42 +262,41 @@ def fetch_alphavantage(symbol, timeframe, limit):
     df = df.iloc[-limit:]
     return df
 
-# ==================== РАСШИРЕННЫЙ РАСЧЁТ СИГНАЛА (БЕЗ ИЗМЕНЕНИЙ) ====================
+# ==================== РАСШИРЕННЫЕ ИНДИКАТОРЫ ====================
 def compute_advanced_indicators(df):
     close = df['close']
     high = df['high']
     low = df['low']
     volume = df['volume']
 
-    rsi = ta.momentum.RSIIndicator(close, 14).rsi().iloc[-1]
+    rsi = ta.momentum.RSIIndicator(close, 14).rsi().iloc[-1] if not pd.isna(ta.momentum.RSIIndicator(close, 14).rsi().iloc[-1]) else 50
     macd = ta.trend.MACD(close)
-    macd_diff = macd.macd_diff().iloc[-1]
-    macd_line = macd.macd().iloc[-1]
-    macd_signal = macd.macd_signal().iloc[-1]
-    ema9 = ta.trend.EMAIndicator(close, 9).ema_indicator().iloc[-1]
-    ema21 = ta.trend.EMAIndicator(close, 21).ema_indicator().iloc[-1]
-    bb_high = ta.volatility.BollingerBands(close, 20, 2).bollinger_hband().iloc[-1]
-    bb_low = ta.volatility.BollingerBands(close, 20, 2).bollinger_lband().iloc[-1]
+    macd_diff = macd.macd_diff().iloc[-1] if not pd.isna(macd.macd_diff().iloc[-1]) else 0
+    macd_line = macd.macd().iloc[-1] if not pd.isna(macd.macd().iloc[-1]) else 0
+    macd_signal = macd.macd_signal().iloc[-1] if not pd.isna(macd.macd_signal().iloc[-1]) else 0
+    ema9 = ta.trend.EMAIndicator(close, 9).ema_indicator().iloc[-1] if not pd.isna(ta.trend.EMAIndicator(close, 9).ema_indicator().iloc[-1]) else close.iloc[-1]
+    ema21 = ta.trend.EMAIndicator(close, 21).ema_indicator().iloc[-1] if not pd.isna(ta.trend.EMAIndicator(close, 21).ema_indicator().iloc[-1]) else close.iloc[-1]
+    bb_high = ta.volatility.BollingerBands(close, 20, 2).bollinger_hband().iloc[-1] if not pd.isna(ta.volatility.BollingerBands(close, 20, 2).bollinger_hband().iloc[-1]) else close.iloc[-1]
+    bb_low = ta.volatility.BollingerBands(close, 20, 2).bollinger_lband().iloc[-1] if not pd.isna(ta.volatility.BollingerBands(close, 20, 2).bollinger_lband().iloc[-1]) else close.iloc[-1]
     stoch = ta.momentum.StochasticOscillator(high, low, close, 14, 3)
-    stoch_k = stoch.stoch().iloc[-1]
-    stoch_d = stoch.stoch_signal().iloc[-1]
-    adx = ta.trend.ADXIndicator(high, low, close, 14).adx().iloc[-1]
+    stoch_k = stoch.stoch().iloc[-1] if not pd.isna(stoch.stoch().iloc[-1]) else 50
+    stoch_d = stoch.stoch_signal().iloc[-1] if not pd.isna(stoch.stoch_signal().iloc[-1]) else 50
+    adx = ta.trend.ADXIndicator(high, low, close, 14).adx().iloc[-1] if not pd.isna(ta.trend.ADXIndicator(high, low, close, 14).adx().iloc[-1]) else 25
 
-    # Ichimoku упрощённый
+    # Ichimoku (упрощённо)
     high_9 = high.rolling(9).max().iloc[-1]
     low_9 = low.rolling(9).min().iloc[-1]
     tenkan = (high_9 + low_9) / 2
     high_26 = high.rolling(26).max().iloc[-1]
     low_26 = low.rolling(26).min().iloc[-1]
     kijun = (high_26 + low_26) / 2
-    ichimoku_signal = 1 if close.iloc[-1] > tenkan and close.iloc[-1] > kijun else -1 if close.iloc[-1] < tenkan and close.iloc[-1] < kijun else 0
+    ichimoku = 1 if close.iloc[-1] > tenkan and close.iloc[-1] > kijun else -1 if close.iloc[-1] < tenkan and close.iloc[-1] < kijun else 0
 
     # SuperTrend
-    atr = ta.volatility.AverageTrueRange(high, low, close, 10).average_true_range().iloc[-1]
-    multiplier = 3
-    upper_band = (high.iloc[-1] + low.iloc[-1]) / 2 + multiplier * atr
-    lower_band = (high.iloc[-1] + low.iloc[-1]) / 2 - multiplier * atr
-    supertrend_signal = 1 if close.iloc[-1] > upper_band else -1 if close.iloc[-1] < lower_band else 0
+    atr = ta.volatility.AverageTrueRange(high, low, close, 10).average_true_range().iloc[-1] if not pd.isna(ta.volatility.AverageTrueRange(high, low, close, 10).average_true_range().iloc[-1]) else close.iloc[-1]*0.01
+    upper = (high.iloc[-1] + low.iloc[-1])/2 + 3*atr
+    lower = (high.iloc[-1] + low.iloc[-1])/2 - 3*atr
+    supertrend = 1 if close.iloc[-1] > upper else -1 if close.iloc[-1] < lower else 0
 
     # VWAP
     vwap = (volume * (high + low + close) / 3).sum() / volume.sum() if volume.sum() > 0 else close.iloc[-1]
@@ -342,63 +304,53 @@ def compute_advanced_indicators(df):
 
     # HMA
     def hma(series, period=20):
-        half_period = int(period / 2)
-        sqrt_period = int(np.sqrt(period))
-        wma_half = series.rolling(half_period).apply(lambda x: np.sum(np.arange(1, half_period+1) * x) / np.sum(np.arange(1, half_period+1)))
-        wma_full = series.rolling(period).apply(lambda x: np.sum(np.arange(1, period+1) * x) / np.sum(np.arange(1, period+1)))
-        hma_series = 2 * wma_half - wma_full
-        hma_series = hma_series.rolling(sqrt_period).apply(lambda x: np.sum(np.arange(1, sqrt_period+1) * x) / np.sum(np.arange(1, sqrt_period+1)))
-        return hma_series
-    hma_value = hma(close, 20).iloc[-1]
+        half = int(period/2)
+        sqrt_p = int(np.sqrt(period))
+        wma_half = series.rolling(half).apply(lambda x: np.sum(np.arange(1, half+1)*x)/np.sum(np.arange(1, half+1)) if len(x)==half else np.nan, raw=True)
+        wma_full = series.rolling(period).apply(lambda x: np.sum(np.arange(1, period+1)*x)/np.sum(np.arange(1, period+1)) if len(x)==period else np.nan, raw=True)
+        hma_series = 2*wma_half - wma_full
+        hma_series = hma_series.rolling(sqrt_p).apply(lambda x: np.sum(np.arange(1, sqrt_p+1)*x)/np.sum(np.arange(1, sqrt_p+1)) if len(x)==sqrt_p else np.nan, raw=True)
+        return hma_series.iloc[-1] if not pd.isna(hma_series.iloc[-1]) else close.iloc[-1]
+    hma_value = hma(close, 20)
     hma_signal = 1 if close.iloc[-1] > hma_value else -1 if close.iloc[-1] < hma_value else 0
 
+    # Stochastic RSI
     stoch_rsi = ta.momentum.StochRSIIndicator(close, 14, 3, 3)
     stoch_rsi_k = stoch_rsi.stochrsi_k().iloc[-1] if not pd.isna(stoch_rsi.stochrsi_k().iloc[-1]) else 50
     stoch_rsi_d = stoch_rsi.stochrsi_d().iloc[-1] if not pd.isna(stoch_rsi.stochrsi_d().iloc[-1]) else 50
     stoch_rsi_signal = 1 if stoch_rsi_k < 20 and stoch_rsi_d < 20 else -1 if stoch_rsi_k > 80 and stoch_rsi_d > 80 else 0
 
     return {
-        'rsi': rsi if not pd.isna(rsi) else 50,
-        'macd_diff': macd_diff if not pd.isna(macd_diff) else 0,
-        'macd_line': macd_line if not pd.isna(macd_line) else 0,
-        'macd_signal': macd_signal if not pd.isna(macd_signal) else 0,
-        'ema9': ema9 if not pd.isna(ema9) else close.iloc[-1],
-        'ema21': ema21 if not pd.isna(ema21) else close.iloc[-1],
-        'bb_high': bb_high if not pd.isna(bb_high) else close.iloc[-1],
-        'bb_low': bb_low if not pd.isna(bb_low) else close.iloc[-1],
-        'stoch_k': stoch_k if not pd.isna(stoch_k) else 50,
-        'stoch_d': stoch_d if not pd.isna(stoch_d) else 50,
-        'adx': adx if not pd.isna(adx) else 25,
-        'ichimoku': ichimoku_signal,
-        'supertrend': supertrend_signal,
+        'rsi': rsi,
+        'macd_diff': macd_diff,
+        'macd_line': macd_line,
+        'macd_signal': macd_signal,
+        'ema9': ema9,
+        'ema21': ema21,
+        'bb_high': bb_high,
+        'bb_low': bb_low,
+        'stoch_k': stoch_k,
+        'stoch_d': stoch_d,
+        'adx': adx,
+        'ichimoku': ichimoku,
+        'supertrend': supertrend,
         'vwap': vwap_signal,
         'hma': hma_signal,
         'stoch_rsi': stoch_rsi_signal,
-        'last_close': close.iloc[-1]
+        'last_close': close.iloc[-1],
+        'atr': atr
     }
 
 def get_weighted_signal(indicators):
     weights = {
-        'rsi': 2,
-        'macd': 3,
-        'ema': 2,
-        'bollinger': 1,
-        'stoch': 1,
-        'adx': 2,
-        'ichimoku': 2,
-        'supertrend': 2,
-        'vwap': 1,
-        'hma': 1,
+        'rsi': 2, 'macd': 3, 'ema': 2, 'bollinger': 1, 'stoch': 1,
+        'adx': 2, 'ichimoku': 2, 'supertrend': 2, 'vwap': 1, 'hma': 1,
         'stoch_rsi': 1
     }
+    votes_long, votes_short = 0, 0
 
-    votes_long = 0
-    votes_short = 0
-
-    if indicators['rsi'] < 30:
-        votes_long += weights['rsi']
-    elif indicators['rsi'] > 70:
-        votes_short += weights['rsi']
+    if indicators['rsi'] < 30: votes_long += weights['rsi']
+    elif indicators['rsi'] > 70: votes_short += weights['rsi']
 
     if indicators['macd_diff'] > 0 and indicators['macd_line'] > indicators['macd_signal']:
         votes_long += weights['macd']
@@ -459,6 +411,101 @@ def get_weighted_signal(indicators):
     else:
         return 'HOLD'
 
+# ==================== МУЛЬТИ-ТАЙМФРЕЙМОВЫЙ ФИЛЬТР ====================
+def get_multi_timeframe_alignment(asset, primary_tf):
+    tf_list = ['1h', '4h']
+    signals = []
+    for tf in tf_list:
+        if tf == primary_tf:
+            continue
+        try:
+            df = get_market_data(asset, tf, limit=200)
+            if df is not None and not df.empty:
+                ind = compute_advanced_indicators(df)
+                signals.append(get_weighted_signal(ind))
+            else:
+                signals.append('HOLD')
+        except:
+            signals.append('HOLD')
+    long_count = signals.count('LONG')
+    short_count = signals.count('SHORT')
+    return long_count, short_count
+
+# ==================== ГЕНЕРАЦИЯ СИГНАЛА (БЕЗ НОВОСТЕЙ) ====================
+def generate_signal(asset, duration):
+    timeframe = get_timeframe_from_duration(duration)
+    limit = get_candle_limit(timeframe)
+    logger.info(f"Авто-таймфрейм: {timeframe}, лимит: {limit} для {duration}")
+
+    df = get_market_data(asset, timeframe, limit=limit)
+    if df is None or df.empty:
+        return {'signal': 'HOLD', 'strength': 'WEAK', 'emoji': '⚪', 'reason': 'Нет данных', 'indicators': None, 'risk': None, 'timeframe': timeframe}
+
+    ind = compute_advanced_indicators(df)
+    primary_signal = get_weighted_signal(ind)
+
+    # Мульти-таймфрейм
+    long_tf, short_tf = get_multi_timeframe_alignment(asset, timeframe)
+    tf_boost = 0
+    if primary_signal == 'LONG' and long_tf >= 2:
+        tf_boost = 1
+    elif primary_signal == 'SHORT' and short_tf >= 2:
+        tf_boost = 1
+    elif primary_signal == 'LONG' and short_tf >= 2:
+        tf_boost = -1
+    elif primary_signal == 'SHORT' and long_tf >= 2:
+        tf_boost = -1
+
+    # Определяем силу сигнала
+    if primary_signal == 'HOLD':
+        final_signal = 'HOLD'
+        strength = 'WEAK'
+        emoji = '⚪'
+    else:
+        if tf_boost == 1:
+            strength = 'STRONG'
+            final_signal = primary_signal
+        elif tf_boost == -1:
+            strength = 'WEAK'
+            final_signal = 'HOLD'  # если противоречие – лучше не входить
+        else:
+            strength = 'MEDIUM'
+            final_signal = primary_signal
+
+        # Цвет
+        if final_signal == 'LONG' and strength == 'STRONG':
+            emoji = '🟢'
+        elif final_signal == 'LONG' and strength == 'MEDIUM':
+            emoji = '🟡'
+        elif final_signal == 'LONG' and strength == 'WEAK':
+            emoji = '🟠'
+        elif final_signal == 'SHORT' and strength == 'STRONG':
+            emoji = '🔴'
+        elif final_signal == 'SHORT' and strength == 'MEDIUM':
+            emoji = '🟠'
+        elif final_signal == 'SHORT' and strength == 'WEAK':
+            emoji = '🟡'
+        else:
+            emoji = '⚪'
+
+    risk_params = calculate_risk_parameters(df, ind['last_close'])
+    reason = f"Таймфрейм: {timeframe} (авто), свечей: {len(df)}\n"
+    reason += f"Мульти-ТФ: {long_tf} LONG, {short_tf} SHORT на 1H/4H"
+    if tf_boost == 1:
+        reason += " → усиление сигнала"
+    elif tf_boost == -1:
+        reason += " → противоречие, сигнал ослаблен"
+
+    return {
+        'signal': final_signal,
+        'strength': strength,
+        'emoji': emoji,
+        'reason': reason,
+        'indicators': ind,
+        'risk': risk_params,
+        'timeframe': timeframe
+    }
+
 def calculate_risk_parameters(df, entry_price):
     try:
         atr = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], 14).average_true_range().iloc[-1]
@@ -466,45 +513,12 @@ def calculate_risk_parameters(df, entry_price):
             atr = df['close'].iloc[-1] * 0.01
         stop_loss = entry_price - 2 * atr
         take_profit = entry_price + 3 * atr
-        return {
-            'stop_loss': stop_loss,
-            'take_profit': take_profit,
-            'atr': atr
-        }
+        return {'stop_loss': stop_loss, 'take_profit': take_profit, 'atr': atr}
     except Exception as e:
-        logger.warning(f"Ошибка расчёта риска: {e}")
+        logger.warning(f"Ошибка риска: {e}")
         return {'stop_loss': entry_price * 0.98, 'take_profit': entry_price * 1.03, 'atr': entry_price * 0.01}
 
-# ==================== ГЕНЕРАЦИЯ СИГНАЛА С АВТО-ТАЙМФРЕЙМОМ ====================
-def generate_signal(asset, duration):
-    """
-    Генерирует сигнал на основе выбранного времени сделки.
-    Таймфрейм и лимит свечей определяются автоматически.
-    """
-    timeframe = get_timeframe_from_duration(duration)
-    limit = get_candle_limit(timeframe)
-    logger.info(f"Авто-таймфрейм: {timeframe}, лимит свечей: {limit} для duration {duration}")
-    
-    df = get_market_data(asset, timeframe, limit=limit)
-    if df is None or df.empty:
-        return {'signal': 'HOLD', 'reason': 'Нет данных', 'risk': None}
-    
-    indicators = compute_advanced_indicators(df)
-    signal = get_weighted_signal(indicators)
-    entry_price = indicators['last_close']
-    risk_params = calculate_risk_parameters(df, entry_price)
-    
-    # Объяснение (краткое)
-    reason = f"Таймфрейм: {timeframe} (авто), свечей: {len(df)}"
-    return {
-        'signal': signal,
-        'reason': reason,
-        'indicators': indicators,
-        'risk': risk_params,
-        'timeframe': timeframe
-    }
-
-# ==================== МЕНЮ И КНОПКИ (ТОЛЬКО ВЫБОР АКТИВА И ВРЕМЕНИ) ====================
+# ==================== МЕНЮ И КНОПКИ ====================
 CURRENCIES = ["AUD/USD OTC","EUR/USD OTC","EUR/RUB OTC","GBP/JPY OTC",
               "USD/CAD OTC","USD/CHF OTC","USD/JPY OTC","GBP/USD OTC"]
 CRYPTO = ["BTC/USD OTC","ETH/USD OTC","LTC/USD OTC","XRP/USD OTC","SOL/USD OTC"]
@@ -528,7 +542,7 @@ def build_keyboard(items, back=False, back_data=None, cols=2):
         keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data=back_data or "back")])
     return InlineKeyboardMarkup(keyboard)
 
-# ==================== ОБРАБОТЧИКИ (УБИРАЕМ ВЫБОР ТАЙМФРЕЙМА) ====================
+# ==================== ОБРАБОТЧИКИ ====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         text = ("🚀 *Торговый бот-ассистент*\n\n"
@@ -606,7 +620,6 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("⚠️ Ошибка: выберите актив заново.")
         context.user_data['processing'] = False
         return
-
     if asset in ['back_to_asset', 'back_to_section', 'go', 'home']:
         await query.edit_message_text("⚠️ Ошибка: выберите актив заново.")
         context.user_data['processing'] = False
@@ -616,35 +629,38 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text("⏳ Анализирую рынок...")
     try:
         clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
-        logger.info(f"Пробую получить данные для {clean_asset}, duration {duration}")
-        signal_data = generate_signal(clean_asset, duration)
-        signal = signal_data['signal']
-        reason = signal_data['reason']
-        indicators = signal_data['indicators']
-        risk = signal_data['risk']
-        price = indicators['last_close']
-        emoji = '🟢' if signal == 'LONG' else '🔴' if signal == 'SHORT' else '⚪'
-        msg = (f"{emoji} *СИГНАЛ: {signal}*\n"
+        result = generate_signal(clean_asset, duration)
+        signal = result['signal']
+        strength = result['strength']
+        emoji = result['emoji']
+        reason = result['reason']
+        ind = result['indicators']
+        risk = result['risk']
+        price = ind['last_close']
+        tf = result['timeframe']
+
+        msg = (f"{emoji} *{signal}* ({strength})\n"
                f"Актив: {asset}\n"
-               f"Таймфрейм: {signal_data['timeframe']} (авто)\n"
+               f"Таймфрейм: {tf} (авто)\n"
                f"Время сделки: {duration}\n"
                f"Цена: {price:.4f}\n\n"
                f"📊 Индикаторы:\n"
-               f"RSI: {indicators['rsi']:.1f}\n"
-               f"MACD: {indicators['macd_diff']:.4f}\n"
-               f"EMA9: {indicators['ema9']:.4f}, EMA21: {indicators['ema21']:.4f}\n"
-               f"Stoch: K={indicators['stoch_k']:.1f}, D={indicators['stoch_d']:.1f}\n"
-               f"ADX: {indicators['adx']:.1f}\n"
-               f"Ichimoku: {indicators['ichimoku']}\n"
-               f"SuperTrend: {indicators['supertrend']}\n"
-               f"VWAP: {indicators['vwap']}\n"
-               f"HMA: {indicators['hma']}\n"
-               f"Stoch RSI: {indicators['stoch_rsi']}\n\n"
+               f"RSI: {ind['rsi']:.1f}\n"
+               f"MACD: {ind['macd_diff']:.4f}\n"
+               f"EMA9: {ind['ema9']:.4f}, EMA21: {ind['ema21']:.4f}\n"
+               f"Stoch: K={ind['stoch_k']:.1f}, D={ind['stoch_d']:.1f}\n"
+               f"ADX: {ind['adx']:.1f}\n"
+               f"Ichimoku: {ind['ichimoku']}\n"
+               f"SuperTrend: {ind['supertrend']}\n"
+               f"VWAP: {ind['vwap']}\n"
+               f"HMA: {ind['hma']}\n"
+               f"Stoch RSI: {ind['stoch_rsi']}\n\n"
                f"🛡️ Риск:\n"
                f"Stop-Loss: {risk['stop_loss']:.4f}\n"
                f"Take-Profit: {risk['take_profit']:.4f}\n"
                f"ATR: {risk['atr']:.4f}\n\n"
                f"ℹ️ {reason}")
+
         keyboard = [
             [InlineKeyboardButton("🔄 Дай сигнал ещё раз", callback_data="resignal")],
             [InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]
@@ -660,10 +676,7 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"duration error: {e}")
         keyboard = [[InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]]
         try:
-            await query.edit_message_text(
-                f"❌ Ошибка: {str(e)}",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
+            await query.edit_message_text(f"❌ Ошибка: {str(e)}", reply_markup=InlineKeyboardMarkup(keyboard))
         except BadRequest as ex:
             if "Message is not modified" in str(ex):
                 pass
@@ -693,34 +706,38 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text("⏳ Анализирую рынок...")
     try:
         clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
-        signal_data = generate_signal(clean_asset, duration)
-        signal = signal_data['signal']
-        reason = signal_data['reason']
-        indicators = signal_data['indicators']
-        risk = signal_data['risk']
-        price = indicators['last_close']
-        emoji = '🟢' if signal == 'LONG' else '🔴' if signal == 'SHORT' else '⚪'
-        msg = (f"{emoji} *СИГНАЛ: {signal}*\n"
+        result = generate_signal(clean_asset, duration)
+        signal = result['signal']
+        strength = result['strength']
+        emoji = result['emoji']
+        reason = result['reason']
+        ind = result['indicators']
+        risk = result['risk']
+        price = ind['last_close']
+        tf = result['timeframe']
+
+        msg = (f"{emoji} *{signal}* ({strength})\n"
                f"Актив: {asset}\n"
-               f"Таймфрейм: {signal_data['timeframe']} (авто)\n"
+               f"Таймфрейм: {tf} (авто)\n"
                f"Время сделки: {duration}\n"
                f"Цена: {price:.4f}\n\n"
                f"📊 Индикаторы:\n"
-               f"RSI: {indicators['rsi']:.1f}\n"
-               f"MACD: {indicators['macd_diff']:.4f}\n"
-               f"EMA9: {indicators['ema9']:.4f}, EMA21: {indicators['ema21']:.4f}\n"
-               f"Stoch: K={indicators['stoch_k']:.1f}, D={indicators['stoch_d']:.1f}\n"
-               f"ADX: {indicators['adx']:.1f}\n"
-               f"Ichimoku: {indicators['ichimoku']}\n"
-               f"SuperTrend: {indicators['supertrend']}\n"
-               f"VWAP: {indicators['vwap']}\n"
-               f"HMA: {indicators['hma']}\n"
-               f"Stoch RSI: {indicators['stoch_rsi']}\n\n"
+               f"RSI: {ind['rsi']:.1f}\n"
+               f"MACD: {ind['macd_diff']:.4f}\n"
+               f"EMA9: {ind['ema9']:.4f}, EMA21: {ind['ema21']:.4f}\n"
+               f"Stoch: K={ind['stoch_k']:.1f}, D={ind['stoch_d']:.1f}\n"
+               f"ADX: {ind['adx']:.1f}\n"
+               f"Ichimoku: {ind['ichimoku']}\n"
+               f"SuperTrend: {ind['supertrend']}\n"
+               f"VWAP: {ind['vwap']}\n"
+               f"HMA: {ind['hma']}\n"
+               f"Stoch RSI: {ind['stoch_rsi']}\n\n"
                f"🛡️ Риск:\n"
                f"Stop-Loss: {risk['stop_loss']:.4f}\n"
                f"Take-Profit: {risk['take_profit']:.4f}\n"
                f"ATR: {risk['atr']:.4f}\n\n"
                f"ℹ️ {reason}")
+
         keyboard = [
             [InlineKeyboardButton("🔄 Дай сигнал ещё раз", callback_data="resignal")],
             [InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]
@@ -736,10 +753,7 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"resignal error: {e}")
         keyboard = [[InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]]
         try:
-            await query.edit_message_text(
-                f"❌ Ошибка: {str(e)}",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
+            await query.edit_message_text(f"❌ Ошибка: {str(e)}", reply_markup=InlineKeyboardMarkup(keyboard))
         except BadRequest as ex:
             if "Message is not modified" in str(ex):
                 pass
