@@ -1,6 +1,7 @@
 import os
 import logging
 import time
+import asyncio
 from datetime import datetime
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -654,16 +655,18 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
 
         image_url = SIGNAL_IMAGES.get(signal, SIGNAL_IMAGES['HOLD'])
+        # Удаляем сообщение с выбором времени
+        try:
+            await query.message.delete()
+        except:
+            pass
+        # Отправляем фото с сигналом
         await update.effective_chat.send_photo(
             photo=image_url,
             caption=msg,
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        try:
-            await query.message.delete()
-        except:
-            pass
 
     except Exception as e:
         logger.error(f"duration error: {e}")
@@ -677,6 +680,8 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 raise
     finally:
         context.user_data['processing'] = False
+        # Принудительно освобождаем память (небольшая задержка)
+        await asyncio.sleep(0.1)
 
 async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -738,16 +743,16 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
 
         image_url = SIGNAL_IMAGES.get(signal, SIGNAL_IMAGES['HOLD'])
+        try:
+            await query.message.delete()
+        except:
+            pass
         await update.effective_chat.send_photo(
             photo=image_url,
             caption=msg,
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        try:
-            await query.message.delete()
-        except:
-            pass
 
     except Exception as e:
         logger.error(f"resignal error: {e}")
@@ -761,6 +766,7 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 raise
     finally:
         context.user_data['processing'] = False
+        await asyncio.sleep(0.1)
 
 async def back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
