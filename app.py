@@ -25,40 +25,24 @@ if not BOT_TOKEN:
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ==================== КАРТИНКИ (ЭМОДЗИ) ДЛЯ АКТИВОВ ====================
+# ==================== КАРТИНКИ ДЛЯ СИГНАЛОВ (SHORT И HOLD ПОМЕНЯНЫ) ====================
+SIGNAL_IMAGES = {
+    'LONG': 'https://i.ibb.co/0yRzq6zq/IMG-1465.jpg',
+    'SHORT': 'https://i.ibb.co/zHR8CvM7/IMG-1466.jpg',   # третья картинка
+    'HOLD': 'https://i.ibb.co/N22CvHZr/IMG-1467.jpg'     # вторая картинка
+}
+
+# ==================== ИКОНКИ АКТИВОВ ====================
 ASSET_ICONS = {
-    # Валюты
-    "AUD/USD OTC": "🇦🇺",
-    "EUR/USD OTC": "🇪🇺",
-    "EUR/RUB OTC": "🇪🇺🇷🇺",
-    "GBP/JPY OTC": "🇬🇧🇯🇵",
-    "USD/CAD OTC": "🇺🇸🇨🇦",
-    "USD/CHF OTC": "🇺🇸🇨🇭",
-    "USD/JPY OTC": "🇺🇸🇯🇵",
-    "GBP/USD OTC": "🇬🇧🇺🇸",
-    # Криптовалюты
-    "BTC/USD OTC": "₿",
-    "ETH/USD OTC": "⟠",
-    "LTC/USD OTC": "Ł",
-    "XRP/USD OTC": "✕",
-    "SOL/USD OTC": "◎",
-    # Сырьё
-    "Gold OTC": "🥇",
-    "Silver OTC": "🥈",
-    "Oil OTC": "🛢️",
-    "Natural Gas OTC": "🔥",
-    # Акции
-    "AAPL OTC": "🍎",
-    "TSLA OTC": "🚗",
-    "GOOGL OTC": "🔍",
-    "AMZN OTC": "📦",
-    "MSFT OTC": "💻",
-    "NVDA OTC": "🎮",
-    # Индексы
-    "S&P 500 OTC": "📊",
-    "NASDAQ OTC": "💹",
-    "Dow Jones OTC": "🏛️",
-    "Nikkei 225 OTC": "🗾"
+    "AUD/USD OTC": "🇦🇺", "EUR/USD OTC": "🇪🇺", "EUR/RUB OTC": "🇪🇺🇷🇺",
+    "GBP/JPY OTC": "🇬🇧🇯🇵", "USD/CAD OTC": "🇺🇸🇨🇦", "USD/CHF OTC": "🇺🇸🇨🇭",
+    "USD/JPY OTC": "🇺🇸🇯🇵", "GBP/USD OTC": "🇬🇧🇺🇸",
+    "BTC/USD OTC": "₿", "ETH/USD OTC": "⟠", "LTC/USD OTC": "Ł",
+    "XRP/USD OTC": "✕", "SOL/USD OTC": "◎",
+    "Gold OTC": "🥇", "Silver OTC": "🥈", "Oil OTC": "🛢️", "Natural Gas OTC": "🔥",
+    "AAPL OTC": "🍎", "TSLA OTC": "🚗", "GOOGL OTC": "🔍",
+    "AMZN OTC": "📦", "MSFT OTC": "💻", "NVDA OTC": "🎮",
+    "S&P 500 OTC": "📊", "NASDAQ OTC": "💹", "Dow Jones OTC": "🏛️", "Nikkei 225 OTC": "🗾"
 }
 
 # ==================== МАППИНГ ТАЙМФРЕЙМОВ ====================
@@ -86,8 +70,6 @@ BINANCE_INTERVAL_MAP = {
     '45m': '1h', '1h': '1h', '2h': '4h', '3h': '4h', '4h': '4h'
 }
 
-# ==================== АВТО-ВЫБОР ТАЙМФРЕЙМА (С УЧЁТОМ СЫРЬЯ) ====================
-# Сырьевые активы (для них нельзя использовать таймфреймы меньше 15m)
 COMMODITY_SYMBOLS = ['Gold', 'Silver', 'Oil', 'Natural Gas']
 
 def get_timeframe_from_duration(duration, asset_name):
@@ -100,14 +82,10 @@ def get_timeframe_from_duration(duration, asset_name):
     else:
         seconds = 60
 
-    # Если это сырьё – минимальный таймфрейм 15m
     is_commodity = any(comm in asset_name for comm in COMMODITY_SYMBOLS)
-
     if is_commodity:
-        if seconds <= 900:  # <= 15 мин
+        if seconds <= 900:
             return '15m'
-        elif seconds <= 3600:
-            return '1h'
         else:
             return '1h'
     else:
@@ -123,16 +101,7 @@ def get_timeframe_from_duration(duration, asset_name):
             return '1h'
 
 def get_candle_limit(timeframe):
-    if timeframe == '1m':
-        return 500
-    elif timeframe == '5m':
-        return 400
-    elif timeframe == '15m':
-        return 300
-    elif timeframe == '1h':
-        return 200
-    else:
-        return 300
+    return {'1m':500, '5m':400, '15m':300, '1h':200}.get(timeframe, 300)
 
 # ==================== КОНФИГУРАЦИЯ АКТИВОВ ====================
 SYMBOL_CONFIG = {
@@ -147,12 +116,8 @@ SYMBOL_CONFIG = {
 }
 
 STOCK_ALTERNATIVES = {
-    "GOOGL": ["GOOG"],
-    "AMZN": ["AMZN"],
-    "AAPL": ["AAPL"],
-    "TSLA": ["TSLA"],
-    "MSFT": ["MSFT"],
-    "NVDA": ["NVDA"]
+    "GOOGL": ["GOOG"], "AMZN": ["AMZN"], "AAPL": ["AAPL"],
+    "TSLA": ["TSLA"], "MSFT": ["MSFT"], "NVDA": ["NVDA"]
 }
 
 FOREX_LIST = [
@@ -334,7 +299,6 @@ def compute_advanced_indicators(df):
     stoch_d = stoch.stoch_signal().iloc[-1] if not pd.isna(stoch.stoch_signal().iloc[-1]) else 50
     adx = ta.trend.ADXIndicator(high, low, close, 14).adx().iloc[-1] if not pd.isna(ta.trend.ADXIndicator(high, low, close, 14).adx().iloc[-1]) else 25
 
-    # Ichimoku (упрощённо)
     high_9 = high.rolling(9).max().iloc[-1]
     low_9 = low.rolling(9).min().iloc[-1]
     tenkan = (high_9 + low_9) / 2
@@ -343,17 +307,14 @@ def compute_advanced_indicators(df):
     kijun = (high_26 + low_26) / 2
     ichimoku = 1 if close.iloc[-1] > tenkan and close.iloc[-1] > kijun else -1 if close.iloc[-1] < tenkan and close.iloc[-1] < kijun else 0
 
-    # SuperTrend
     atr = ta.volatility.AverageTrueRange(high, low, close, 10).average_true_range().iloc[-1] if not pd.isna(ta.volatility.AverageTrueRange(high, low, close, 10).average_true_range().iloc[-1]) else close.iloc[-1]*0.01
     upper = (high.iloc[-1] + low.iloc[-1])/2 + 3*atr
     lower = (high.iloc[-1] + low.iloc[-1])/2 - 3*atr
     supertrend = 1 if close.iloc[-1] > upper else -1 if close.iloc[-1] < lower else 0
 
-    # VWAP
     vwap = (volume * (high + low + close) / 3).sum() / volume.sum() if volume.sum() > 0 else close.iloc[-1]
     vwap_signal = 1 if close.iloc[-1] > vwap else -1 if close.iloc[-1] < vwap else 0
 
-    # HMA
     def hma(series, period=20):
         half = int(period/2)
         sqrt_p = int(np.sqrt(period))
@@ -365,96 +326,70 @@ def compute_advanced_indicators(df):
     hma_value = hma(close, 20)
     hma_signal = 1 if close.iloc[-1] > hma_value else -1 if close.iloc[-1] < hma_value else 0
 
-    # Stochastic RSI
     stoch_rsi = ta.momentum.StochRSIIndicator(close, 14, 3, 3)
     stoch_rsi_k = stoch_rsi.stochrsi_k().iloc[-1] if not pd.isna(stoch_rsi.stochrsi_k().iloc[-1]) else 50
     stoch_rsi_d = stoch_rsi.stochrsi_d().iloc[-1] if not pd.isna(stoch_rsi.stochrsi_d().iloc[-1]) else 50
     stoch_rsi_signal = 1 if stoch_rsi_k < 20 and stoch_rsi_d < 20 else -1 if stoch_rsi_k > 80 and stoch_rsi_d > 80 else 0
 
     return {
-        'rsi': rsi,
-        'macd_diff': macd_diff,
-        'macd_line': macd_line,
-        'macd_signal': macd_signal,
-        'ema9': ema9,
-        'ema21': ema21,
-        'bb_high': bb_high,
-        'bb_low': bb_low,
-        'stoch_k': stoch_k,
-        'stoch_d': stoch_d,
-        'adx': adx,
-        'ichimoku': ichimoku,
-        'supertrend': supertrend,
-        'vwap': vwap_signal,
-        'hma': hma_signal,
+        'rsi': rsi, 'macd_diff': macd_diff, 'macd_line': macd_line,
+        'macd_signal': macd_signal, 'ema9': ema9, 'ema21': ema21,
+        'bb_high': bb_high, 'bb_low': bb_low,
+        'stoch_k': stoch_k, 'stoch_d': stoch_d, 'adx': adx,
+        'ichimoku': ichimoku, 'supertrend': supertrend,
+        'vwap': vwap_signal, 'hma': hma_signal,
         'stoch_rsi': stoch_rsi_signal,
-        'last_close': close.iloc[-1],
-        'atr': atr
+        'last_close': close.iloc[-1], 'atr': atr
     }
 
 def get_weighted_signal(indicators):
-    weights = {
-        'rsi': 2, 'macd': 3, 'ema': 2, 'bollinger': 1, 'stoch': 1,
-        'adx': 2, 'ichimoku': 2, 'supertrend': 2, 'vwap': 1, 'hma': 1,
-        'stoch_rsi': 1
-    }
+    weights = {'rsi':2,'macd':3,'ema':2,'bollinger':1,'stoch':1,
+               'adx':2,'ichimoku':2,'supertrend':2,'vwap':1,'hma':1,'stoch_rsi':1}
     votes_long, votes_short = 0, 0
-
     if indicators['rsi'] < 30: votes_long += weights['rsi']
     elif indicators['rsi'] > 70: votes_short += weights['rsi']
-
     if indicators['macd_diff'] > 0 and indicators['macd_line'] > indicators['macd_signal']:
         votes_long += weights['macd']
     elif indicators['macd_diff'] < 0 and indicators['macd_line'] < indicators['macd_signal']:
         votes_short += weights['macd']
-
     if indicators['ema9'] > indicators['ema21']:
         votes_long += weights['ema']
     else:
         votes_short += weights['ema']
-
     last = indicators['last_close']
     if last <= indicators['bb_low']:
         votes_long += weights['bollinger']
     elif last >= indicators['bb_high']:
         votes_short += weights['bollinger']
-
     if indicators['stoch_k'] < 20 and indicators['stoch_d'] < 20:
         votes_long += weights['stoch']
     elif indicators['stoch_k'] > 80 and indicators['stoch_d'] > 80:
         votes_short += weights['stoch']
-
     if indicators['adx'] > 25:
         if indicators['ema9'] > indicators['ema21']:
             votes_long += weights['adx']
         else:
             votes_short += weights['adx']
-
     if indicators['ichimoku'] > 0:
         votes_long += weights['ichimoku']
     elif indicators['ichimoku'] < 0:
         votes_short += weights['ichimoku']
-
     if indicators['supertrend'] > 0:
         votes_long += weights['supertrend']
     elif indicators['supertrend'] < 0:
         votes_short += weights['supertrend']
-
     if indicators['vwap'] > 0:
         votes_long += weights['vwap']
     elif indicators['vwap'] < 0:
         votes_short += weights['vwap']
-
     if indicators['hma'] > 0:
         votes_long += weights['hma']
     elif indicators['hma'] < 0:
         votes_short += weights['hma']
-
     if indicators['stoch_rsi'] > 0:
         votes_long += weights['stoch_rsi']
     elif indicators['stoch_rsi'] < 0:
         votes_short += weights['stoch_rsi']
-
     if votes_long > votes_short and votes_long >= 5:
         return 'LONG'
     elif votes_short > votes_long and votes_short >= 5:
@@ -462,7 +397,6 @@ def get_weighted_signal(indicators):
     else:
         return 'HOLD'
 
-# ==================== МУЛЬТИ-ТАЙМФРЕЙМОВЫЙ ФИЛЬТР ====================
 def get_multi_timeframe_alignment(asset, primary_tf):
     tf_list = ['1h', '4h']
     signals = []
@@ -482,9 +416,16 @@ def get_multi_timeframe_alignment(asset, primary_tf):
     short_count = signals.count('SHORT')
     return long_count, short_count
 
-# ==================== ГЕНЕРАЦИЯ СИГНАЛА ====================
+def calculate_risk_parameters(df, entry_price):
+    try:
+        atr = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], 14).average_true_range().iloc[-1]
+        if pd.isna(atr) or atr == 0:
+            atr = df['close'].iloc[-1] * 0.01
+        return {'stop_loss': entry_price - 2*atr, 'take_profit': entry_price + 3*atr, 'atr': atr}
+    except:
+        return {'stop_loss': entry_price * 0.98, 'take_profit': entry_price * 1.03, 'atr': entry_price * 0.01}
+
 def generate_signal(asset, duration):
-    # Авто-таймфрейм с учётом сырья
     timeframe = get_timeframe_from_duration(duration, asset)
     limit = get_candle_limit(timeframe)
     logger.info(f"Авто-таймфрейм: {timeframe}, лимит: {limit} для {duration} (актив: {asset})")
@@ -497,7 +438,6 @@ def generate_signal(asset, duration):
     ind = compute_advanced_indicators(df)
     primary_signal = get_weighted_signal(ind)
 
-    # Мульти-таймфрейм
     long_tf, short_tf = get_multi_timeframe_alignment(clean_asset, timeframe)
     tf_boost = 0
     if primary_signal == 'LONG' and long_tf >= 2:
@@ -539,9 +479,8 @@ def generate_signal(asset, duration):
         else:
             emoji = '⚪'
 
-    risk_params = calculate_risk_parameters(df, ind['last_close'])
-    reason = f"Таймфрейм: {timeframe} (авто), свечей: {len(df)}\n"
-    reason += f"Мульти-ТФ: {long_tf} LONG, {short_tf} SHORT на 1H/4H"
+    risk = calculate_risk_parameters(df, ind['last_close'])
+    reason = f"Таймфрейм: {timeframe} (авто), свечей: {len(df)}\nМульти-ТФ: {long_tf} LONG, {short_tf} SHORT на 1H/4H"
     if tf_boost == 1:
         reason += " → усиление сигнала"
     elif tf_boost == -1:
@@ -553,23 +492,11 @@ def generate_signal(asset, duration):
         'emoji': emoji,
         'reason': reason,
         'indicators': ind,
-        'risk': risk_params,
+        'risk': risk,
         'timeframe': timeframe
     }
 
-def calculate_risk_parameters(df, entry_price):
-    try:
-        atr = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], 14).average_true_range().iloc[-1]
-        if pd.isna(atr) or atr == 0:
-            atr = df['close'].iloc[-1] * 0.01
-        stop_loss = entry_price - 2 * atr
-        take_profit = entry_price + 3 * atr
-        return {'stop_loss': stop_loss, 'take_profit': take_profit, 'atr': atr}
-    except Exception as e:
-        logger.warning(f"Ошибка риска: {e}")
-        return {'stop_loss': entry_price * 0.98, 'take_profit': entry_price * 1.03, 'atr': entry_price * 0.01}
-
-# ==================== МЕНЮ И КНОПКИ ====================
+# ==================== МЕНЮ ====================
 CURRENCIES = ["AUD/USD OTC","EUR/USD OTC","EUR/RUB OTC","GBP/JPY OTC",
               "USD/CAD OTC","USD/CHF OTC","USD/JPY OTC","GBP/USD OTC"]
 CRYPTO = ["BTC/USD OTC","ETH/USD OTC","LTC/USD OTC","XRP/USD OTC","SOL/USD OTC"]
@@ -595,14 +522,11 @@ def build_keyboard(items, back=False, back_data=None, cols=2):
 
 # ==================== ОБРАБОТЧИКИ ====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        text = ("🚀 *Торговый бот-ассистент*\n\n"
-                "Я анализирую рынок и даю сигналы по активам из Pocket Option.\n"
-                "Нажми **GO!** чтобы начать.")
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("GO!", callback_data="go")]])
-        await update.message.reply_text(text, parse_mode='Markdown', reply_markup=keyboard)
-    except Exception as e:
-        logger.error(f"start error: {e}")
+    text = ("🚀 *Торговый бот-ассистент*\n\n"
+            "Я анализирую рынок и даю сигналы по активам из Pocket Option.\n"
+            "Нажми **GO!** чтобы начать.")
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("GO!", callback_data="go")]])
+    await update.message.reply_text(text, parse_mode='Markdown', reply_markup=keyboard)
 
 async def go(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -660,7 +584,6 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("Уже обрабатываю...")
         return
     context.user_data['processing'] = True
-
     await query.answer()
     duration = query.data
     if duration in ['back_to_asset', 'back_to_section', 'go', 'home']:
@@ -714,13 +637,21 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔄 Дай сигнал ещё раз", callback_data="resignal")],
             [InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]
         ]
+
+        # Отправляем картинку вместо текста
+        image_url = SIGNAL_IMAGES.get(signal, SIGNAL_IMAGES['HOLD'])
+        await update.effective_chat.send_photo(
+            photo=image_url,
+            caption=msg,
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        # Удаляем сообщение с выбором времени
         try:
-            await query.edit_message_text(msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
-        except BadRequest as e:
-            if "Message is not modified" in str(e):
-                pass
-            else:
-                raise
+            await query.message.delete()
+        except:
+            pass
+
     except Exception as e:
         logger.error(f"duration error: {e}")
         keyboard = [[InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]]
@@ -740,7 +671,6 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("Уже обрабатываю...")
         return
     context.user_data['processing'] = True
-
     await query.answer()
     asset = context.user_data.get('asset')
     duration = context.user_data.get('duration')
@@ -793,13 +723,19 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔄 Дай сигнал ещё раз", callback_data="resignal")],
             [InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]
         ]
+
+        image_url = SIGNAL_IMAGES.get(signal, SIGNAL_IMAGES['HOLD'])
+        await update.effective_chat.send_photo(
+            photo=image_url,
+            caption=msg,
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
         try:
-            await query.edit_message_text(msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
-        except BadRequest as e:
-            if "Message is not modified" in str(e):
-                pass
-            else:
-                raise
+            await query.message.delete()
+        except:
+            pass
+
     except Exception as e:
         logger.error(f"resignal error: {e}")
         keyboard = [[InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]]
@@ -838,18 +774,12 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==================== ЗАПУСК ====================
 def main():
     flask_app = Flask(__name__)
-
     @flask_app.route('/')
     def home():
         return "Bot is running!"
-
     def run_flask():
-        port = int(os.environ.get('PORT', 10000))
-        flask_app.run(host='0.0.0.0', port=port)
-
-    thread = threading.Thread(target=run_flask)
-    thread.daemon = True
-    thread.start()
+        flask_app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
+    threading.Thread(target=run_flask, daemon=True).start()
     logger.info("Flask запущен")
 
     app = Application.builder().token(BOT_TOKEN).build()
