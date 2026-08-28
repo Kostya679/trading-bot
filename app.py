@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 
 # ==================== БАННЕРЫ ====================
 BANNER_IMAGES = {
-    'welcome': 'https://i.ibb.co/3Yjk8G6s/IMG-1470.jpg',   # первая картинка (приветствие)
-    'sections': 'https://i.ibb.co/wN0z4Vvy/IMG-1471.jpg'    # вторая картинка (выбор раздела)
+    'welcome': 'https://i.ibb.co/3Yjk8G6s/IMG-1470.jpg',
+    'sections': 'https://i.ibb.co/wN0z4Vvy/IMG-1471.jpg'
 }
 
 # ==================== КАРТИНКИ ДЛЯ СИГНАЛОВ ====================
@@ -526,7 +526,7 @@ def build_keyboard(items, back=False, back_data=None, cols=2):
         keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data=back_data or "back")])
     return InlineKeyboardMarkup(keyboard)
 
-# ==================== ОБРАБОТЧИКИ (С БАННЕРАМИ) ====================
+# ==================== ОБРАБОТЧИКИ (ИСПРАВЛЕННЫЕ) ====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Приветственное сообщение с первой картинкой"""
     text = ("🚀 *Торговый бот-ассистент*\n\n"
@@ -564,8 +564,8 @@ async def go(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# ==================== ОСТАЛЬНЫЕ ОБРАБОТЧИКИ (без изменений) ====================
 async def section_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка выбора раздела – удаляем фото и отправляем текстовое сообщение с активами"""
     query = update.callback_query
     await query.answer()
     section = query.data
@@ -580,10 +580,19 @@ async def section_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif section == "indices":
         items, title = INDICES, "📊 Индексы"
     else:
-        await query.edit_message_text("Ошибка")
+        await update.effective_chat.send_message("Ошибка")
         return
     keyboard = build_keyboard(items, back=True, back_data="go")
-    await query.edit_message_text(f"{title} (выберите актив):", reply_markup=keyboard)
+    # Удаляем фото с выбором раздела
+    try:
+        await query.message.delete()
+    except:
+        pass
+    # Отправляем новое текстовое сообщение с кнопками
+    await update.effective_chat.send_message(
+        f"{title} (выберите актив):",
+        reply_markup=keyboard
+    )
 
 async def asset_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -595,6 +604,23 @@ async def asset_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     icon = ASSET_ICONS.get(asset, "")
     text = f"{icon} *{asset}*\n\nВыберите время сделки:"
     keyboard = build_keyboard(DURATIONS, back=True, back_data="back_to_section")
+    try:
+        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            pass
+        else:
+            raise
+
+async def timeframe_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    tf = query.data
+    if tf in ['back_to_section', 'back_to_asset', 'go', 'home']:
+        return
+    context.user_data['timeframe'] = tf
+    text = f"✅ Таймфрейм *{tf}* выбран.\nТеперь выберите время сделки:"
+    keyboard = build_keyboard(DURATIONS, back=True, back_data="back_to_asset")
     try:
         await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
     except BadRequest as e:
@@ -664,16 +690,18 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
 
         image_url = SIGNAL_IMAGES.get(signal, SIGNAL_IMAGES['HOLD'])
+        # Удаляем сообщение с выбором времени
+        try:
+            await query.message.delete()
+        except:
+            pass
+        # Отправляем фото с сигналом
         await update.effective_chat.send_photo(
             photo=image_url,
             caption=msg,
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        try:
-            await query.message.delete()
-        except:
-            pass
 
     except Exception as e:
         logger.error(f"duration error: {e}")
@@ -748,16 +776,16 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
 
         image_url = SIGNAL_IMAGES.get(signal, SIGNAL_IMAGES['HOLD'])
+        try:
+            await query.message.delete()
+        except:
+            pass
         await update.effective_chat.send_photo(
             photo=image_url,
             caption=msg,
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        try:
-            await query.message.delete()
-        except:
-            pass
 
     except Exception as e:
         logger.error(f"resignal error: {e}")
@@ -788,13 +816,11 @@ async def back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif back_to == "go":
         await go(update, context)
     elif back_to == "home":
-        # Возврат в главное меню – отправляем первый баннер (приветствие)
-        # Удаляем текущее сообщение и запускаем /start (эквивалент)
+        # Возврат в главное меню – отправляем первый баннер
         try:
             await query.message.delete()
         except:
             pass
-        # Отправляем приветствие с первой картинкой
         text = ("🚀 *Торговый бот-ассистент*\n\n"
                 "Я анализирую рынок и даю сигналы по активам из Pocket Option.\n"
                 "Нажми **GO!** чтобы начать.")
@@ -827,6 +853,7 @@ def main():
     app.add_handler(CallbackQueryHandler(go, pattern="^go$"))
     app.add_handler(CallbackQueryHandler(section_handler, pattern="^(currencies|crypto|commodities|stocks|indices)$"))
     app.add_handler(CallbackQueryHandler(asset_selected, pattern="^(" + "|".join(CURRENCIES+CRYPTO+COMMODITIES+STOCKS+INDICES) + ")$"))
+    app.add_handler(CallbackQueryHandler(timeframe_selected, pattern="^(" + "|".join(TIMEFRAMES) + ")$"))
     app.add_handler(CallbackQueryHandler(duration_selected, pattern="^(" + "|".join(DURATIONS) + ")$"))
     app.add_handler(CallbackQueryHandler(resignal, pattern="^resignal$"))
     app.add_handler(CallbackQueryHandler(back_handler, pattern="^(back_to_section|back_to_asset|go|home)$"))
