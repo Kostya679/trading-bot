@@ -25,6 +25,42 @@ if not BOT_TOKEN:
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ==================== КАРТИНКИ (ЭМОДЗИ) ДЛЯ АКТИВОВ ====================
+ASSET_ICONS = {
+    # Валюты
+    "AUD/USD OTC": "🇦🇺",
+    "EUR/USD OTC": "🇪🇺",
+    "EUR/RUB OTC": "🇪🇺🇷🇺",
+    "GBP/JPY OTC": "🇬🇧🇯🇵",
+    "USD/CAD OTC": "🇺🇸🇨🇦",
+    "USD/CHF OTC": "🇺🇸🇨🇭",
+    "USD/JPY OTC": "🇺🇸🇯🇵",
+    "GBP/USD OTC": "🇬🇧🇺🇸",
+    # Криптовалюты
+    "BTC/USD OTC": "₿",
+    "ETH/USD OTC": "⟠",
+    "LTC/USD OTC": "Ł",
+    "XRP/USD OTC": "✕",
+    "SOL/USD OTC": "◎",
+    # Сырьё
+    "Gold OTC": "🥇",
+    "Silver OTC": "🥈",
+    "Oil OTC": "🛢️",
+    "Natural Gas OTC": "🔥",
+    # Акции
+    "AAPL OTC": "🍎",
+    "TSLA OTC": "🚗",
+    "GOOGL OTC": "🔍",
+    "AMZN OTC": "📦",
+    "MSFT OTC": "💻",
+    "NVDA OTC": "🎮",
+    # Индексы
+    "S&P 500 OTC": "📊",
+    "NASDAQ OTC": "💹",
+    "Dow Jones OTC": "🏛️",
+    "Nikkei 225 OTC": "🗾"
+}
+
 # ==================== МАППИНГ ТАЙМФРЕЙМОВ ====================
 YFINANCE_INTERVAL_MAP = {
     '5s': '1m', '10s': '1m', '15s': '1m', '30s': '1m',
@@ -50,8 +86,11 @@ BINANCE_INTERVAL_MAP = {
     '45m': '1h', '1h': '1h', '2h': '4h', '3h': '4h', '4h': '4h'
 }
 
-# ==================== АВТО-ВЫБОР ТАЙМФРЕЙМА И ЛИМИТА ====================
-def get_timeframe_from_duration(duration):
+# ==================== АВТО-ВЫБОР ТАЙМФРЕЙМА (С УЧЁТОМ СЫРЬЯ) ====================
+# Сырьевые активы (для них нельзя использовать таймфреймы меньше 15m)
+COMMODITY_SYMBOLS = ['Gold', 'Silver', 'Oil', 'Natural Gas']
+
+def get_timeframe_from_duration(duration, asset_name):
     if duration.endswith('s'):
         seconds = int(duration[:-1])
     elif duration.endswith('m'):
@@ -60,16 +99,28 @@ def get_timeframe_from_duration(duration):
         seconds = int(duration[:-1]) * 3600
     else:
         seconds = 60
-    if seconds <= 60:
-        return '1m'
-    elif seconds <= 300:
-        return '5m'
-    elif seconds <= 900:
-        return '15m'
-    elif seconds <= 3600:
-        return '1h'
+
+    # Если это сырьё – минимальный таймфрейм 15m
+    is_commodity = any(comm in asset_name for comm in COMMODITY_SYMBOLS)
+
+    if is_commodity:
+        if seconds <= 900:  # <= 15 мин
+            return '15m'
+        elif seconds <= 3600:
+            return '1h'
+        else:
+            return '1h'
     else:
-        return '1h'
+        if seconds <= 60:
+            return '1m'
+        elif seconds <= 300:
+            return '5m'
+        elif seconds <= 900:
+            return '15m'
+        elif seconds <= 3600:
+            return '1h'
+        else:
+            return '1h'
 
 def get_candle_limit(timeframe):
     if timeframe == '1m':
@@ -431,13 +482,15 @@ def get_multi_timeframe_alignment(asset, primary_tf):
     short_count = signals.count('SHORT')
     return long_count, short_count
 
-# ==================== ГЕНЕРАЦИЯ СИГНАЛА (БЕЗ НОВОСТЕЙ) ====================
+# ==================== ГЕНЕРАЦИЯ СИГНАЛА ====================
 def generate_signal(asset, duration):
-    timeframe = get_timeframe_from_duration(duration)
+    # Авто-таймфрейм с учётом сырья
+    timeframe = get_timeframe_from_duration(duration, asset)
     limit = get_candle_limit(timeframe)
-    logger.info(f"Авто-таймфрейм: {timeframe}, лимит: {limit} для {duration}")
+    logger.info(f"Авто-таймфрейм: {timeframe}, лимит: {limit} для {duration} (актив: {asset})")
 
-    df = get_market_data(asset, timeframe, limit=limit)
+    clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
+    df = get_market_data(clean_asset, timeframe, limit=limit)
     if df is None or df.empty:
         return {'signal': 'HOLD', 'strength': 'WEAK', 'emoji': '⚪', 'reason': 'Нет данных', 'indicators': None, 'risk': None, 'timeframe': timeframe}
 
@@ -445,7 +498,7 @@ def generate_signal(asset, duration):
     primary_signal = get_weighted_signal(ind)
 
     # Мульти-таймфрейм
-    long_tf, short_tf = get_multi_timeframe_alignment(asset, timeframe)
+    long_tf, short_tf = get_multi_timeframe_alignment(clean_asset, timeframe)
     tf_boost = 0
     if primary_signal == 'LONG' and long_tf >= 2:
         tf_boost = 1
@@ -456,7 +509,6 @@ def generate_signal(asset, duration):
     elif primary_signal == 'SHORT' and long_tf >= 2:
         tf_boost = -1
 
-    # Определяем силу сигнала
     if primary_signal == 'HOLD':
         final_signal = 'HOLD'
         strength = 'WEAK'
@@ -467,12 +519,11 @@ def generate_signal(asset, duration):
             final_signal = primary_signal
         elif tf_boost == -1:
             strength = 'WEAK'
-            final_signal = 'HOLD'  # если противоречие – лучше не входить
+            final_signal = 'HOLD'
         else:
             strength = 'MEDIUM'
             final_signal = primary_signal
 
-        # Цвет
         if final_signal == 'LONG' and strength == 'STRONG':
             emoji = '🟢'
         elif final_signal == 'LONG' and strength == 'MEDIUM':
@@ -592,7 +643,8 @@ async def asset_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if asset in ['go', 'currencies', 'crypto', 'commodities', 'stocks', 'indices']:
         return
     context.user_data['asset'] = asset
-    text = f"*{asset}*\n\nВыберите время сделки:"
+    icon = ASSET_ICONS.get(asset, "")
+    text = f"{icon} *{asset}*\n\nВыберите время сделки:"
     keyboard = build_keyboard(DURATIONS, back=True, back_data="back_to_section")
     try:
         await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
@@ -616,17 +668,14 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     asset = context.user_data.get('asset')
-    if not asset:
-        await query.edit_message_text("⚠️ Ошибка: выберите актив заново.")
-        context.user_data['processing'] = False
-        return
-    if asset in ['back_to_asset', 'back_to_section', 'go', 'home']:
+    if not asset or asset in ['back_to_asset', 'back_to_section', 'go', 'home']:
         await query.edit_message_text("⚠️ Ошибка: выберите актив заново.")
         context.user_data['processing'] = False
         return
 
     context.user_data['duration'] = duration
-    await query.edit_message_text("⏳ Анализирую рынок...")
+    icon = ASSET_ICONS.get(asset, "")
+    await query.edit_message_text(f"{icon} ⏳ Анализирую рынок...")
     try:
         clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
         result = generate_signal(clean_asset, duration)
@@ -640,11 +689,11 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tf = result['timeframe']
 
         msg = (f"{emoji} *{signal}* ({strength})\n"
-               f"Актив: {asset}\n"
-               f"Таймфрейм: {tf} (авто)\n"
-               f"Время сделки: {duration}\n"
-               f"Цена: {price:.4f}\n\n"
-               f"📊 Индикаторы:\n"
+               f"{icon} Актив: {asset}\n"
+               f"⏱ Таймфрейм: {tf} (авто)\n"
+               f"⏳ Время сделки: {duration}\n"
+               f"💰 Цена: {price:.4f}\n\n"
+               f"📊 *Индикаторы:*\n"
                f"RSI: {ind['rsi']:.1f}\n"
                f"MACD: {ind['macd_diff']:.4f}\n"
                f"EMA9: {ind['ema9']:.4f}, EMA21: {ind['ema21']:.4f}\n"
@@ -655,7 +704,7 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
                f"VWAP: {ind['vwap']}\n"
                f"HMA: {ind['hma']}\n"
                f"Stoch RSI: {ind['stoch_rsi']}\n\n"
-               f"🛡️ Риск:\n"
+               f"🛡️ *Риск:*\n"
                f"Stop-Loss: {risk['stop_loss']:.4f}\n"
                f"Take-Profit: {risk['take_profit']:.4f}\n"
                f"ATR: {risk['atr']:.4f}\n\n"
@@ -703,7 +752,9 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Ошибка: выберите актив заново.")
         context.user_data['processing'] = False
         return
-    await query.edit_message_text("⏳ Анализирую рынок...")
+
+    icon = ASSET_ICONS.get(asset, "")
+    await query.edit_message_text(f"{icon} ⏳ Анализирую рынок...")
     try:
         clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
         result = generate_signal(clean_asset, duration)
@@ -717,11 +768,11 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tf = result['timeframe']
 
         msg = (f"{emoji} *{signal}* ({strength})\n"
-               f"Актив: {asset}\n"
-               f"Таймфрейм: {tf} (авто)\n"
-               f"Время сделки: {duration}\n"
-               f"Цена: {price:.4f}\n\n"
-               f"📊 Индикаторы:\n"
+               f"{icon} Актив: {asset}\n"
+               f"⏱ Таймфрейм: {tf} (авто)\n"
+               f"⏳ Время сделки: {duration}\n"
+               f"💰 Цена: {price:.4f}\n\n"
+               f"📊 *Индикаторы:*\n"
                f"RSI: {ind['rsi']:.1f}\n"
                f"MACD: {ind['macd_diff']:.4f}\n"
                f"EMA9: {ind['ema9']:.4f}, EMA21: {ind['ema21']:.4f}\n"
@@ -732,7 +783,7 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
                f"VWAP: {ind['vwap']}\n"
                f"HMA: {ind['hma']}\n"
                f"Stoch RSI: {ind['stoch_rsi']}\n\n"
-               f"🛡️ Риск:\n"
+               f"🛡️ *Риск:*\n"
                f"Stop-Loss: {risk['stop_loss']:.4f}\n"
                f"Take-Profit: {risk['take_profit']:.4f}\n"
                f"ATR: {risk['atr']:.4f}\n\n"
