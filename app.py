@@ -26,7 +26,7 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 # ==================== ПРИВЕТСТВЕННЫЙ БАННЕР ====================
-WELCOME_BANNER = 'https://i.ibb.co/3Yjk8G6s/IMG-1470.jpg'   # первая картинка
+WELCOME_BANNER = 'https://i.ibb.co/3Yjk8G6s/IMG-1470.jpg'
 
 # ==================== КАРТИНКИ ДЛЯ СИГНАЛОВ ====================
 SIGNAL_IMAGES = {
@@ -529,7 +529,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Я анализирую рынок и даю сигналы по активам из Pocket Option.\n"
             "Нажми **GO!** чтобы начать.")
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("GO!", callback_data="go")]])
-    # Отправляем фото вместо текста
     await update.message.reply_photo(
         photo=WELCOME_BANNER,
         caption=text,
@@ -547,8 +546,14 @@ async def go(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📈 Акции", callback_data="stocks")],
         [InlineKeyboardButton("📊 Индексы", callback_data="indices")]
     ]
-    # Оставляем текстовое редактирование
-    await query.edit_message_text("Выберите раздел:", reply_markup=InlineKeyboardMarkup(keyboard))
+    try:
+        await query.message.delete()
+    except:
+        pass
+    await update.effective_chat.send_message(
+        "Выберите раздел:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 async def section_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
