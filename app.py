@@ -25,17 +25,11 @@ if not BOT_TOKEN:
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ==================== БАННЕРЫ ====================
-BANNER_IMAGES = {
-    'welcome': 'https://i.ibb.co/3Yjk8G6s/IMG-1470.jpg',
-    'sections': 'https://i.ibb.co/wN0z4Vvy/IMG-1471.jpg'
-}
-
-# ==================== КАРТИНКИ ДЛЯ СИГНАЛОВ ====================
+# ==================== КАРТИНКИ ДЛЯ СИГНАЛОВ (SHORT И HOLD ПОМЕНЯНЫ) ====================
 SIGNAL_IMAGES = {
     'LONG': 'https://i.ibb.co/0yRzq6zq/IMG-1465.jpg',
-    'SHORT': 'https://i.ibb.co/zHR8CvM7/IMG-1466.jpg',
-    'HOLD': 'https://i.ibb.co/N22CvHZr/IMG-1467.jpg'
+    'SHORT': 'https://i.ibb.co/zHR8CvM7/IMG-1466.jpg',   # третья картинка
+    'HOLD': 'https://i.ibb.co/N22CvHZr/IMG-1467.jpg'     # вторая картинка
 }
 
 # ==================== ИКОНКИ АКТИВОВ ====================
@@ -286,25 +280,221 @@ def fetch_alphavantage(symbol, timeframe, limit):
 
 # ==================== РАСШИРЕННЫЕ ИНДИКАТОРЫ ====================
 def compute_advanced_indicators(df):
-    # ... (код тот же, я его не буду повторять для краткости, он длинный, но он должен быть здесь)
-    # Вставь сюда свой код compute_advanced_indicators из предыдущей версии
-    pass
+    close = df['close']
+    high = df['high']
+    low = df['low']
+    volume = df['volume']
+
+    rsi = ta.momentum.RSIIndicator(close, 14).rsi().iloc[-1] if not pd.isna(ta.momentum.RSIIndicator(close, 14).rsi().iloc[-1]) else 50
+    macd = ta.trend.MACD(close)
+    macd_diff = macd.macd_diff().iloc[-1] if not pd.isna(macd.macd_diff().iloc[-1]) else 0
+    macd_line = macd.macd().iloc[-1] if not pd.isna(macd.macd().iloc[-1]) else 0
+    macd_signal = macd.macd_signal().iloc[-1] if not pd.isna(macd.macd_signal().iloc[-1]) else 0
+    ema9 = ta.trend.EMAIndicator(close, 9).ema_indicator().iloc[-1] if not pd.isna(ta.trend.EMAIndicator(close, 9).ema_indicator().iloc[-1]) else close.iloc[-1]
+    ema21 = ta.trend.EMAIndicator(close, 21).ema_indicator().iloc[-1] if not pd.isna(ta.trend.EMAIndicator(close, 21).ema_indicator().iloc[-1]) else close.iloc[-1]
+    bb_high = ta.volatility.BollingerBands(close, 20, 2).bollinger_hband().iloc[-1] if not pd.isna(ta.volatility.BollingerBands(close, 20, 2).bollinger_hband().iloc[-1]) else close.iloc[-1]
+    bb_low = ta.volatility.BollingerBands(close, 20, 2).bollinger_lband().iloc[-1] if not pd.isna(ta.volatility.BollingerBands(close, 20, 2).bollinger_lband().iloc[-1]) else close.iloc[-1]
+    stoch = ta.momentum.StochasticOscillator(high, low, close, 14, 3)
+    stoch_k = stoch.stoch().iloc[-1] if not pd.isna(stoch.stoch().iloc[-1]) else 50
+    stoch_d = stoch.stoch_signal().iloc[-1] if not pd.isna(stoch.stoch_signal().iloc[-1]) else 50
+    adx = ta.trend.ADXIndicator(high, low, close, 14).adx().iloc[-1] if not pd.isna(ta.trend.ADXIndicator(high, low, close, 14).adx().iloc[-1]) else 25
+
+    high_9 = high.rolling(9).max().iloc[-1]
+    low_9 = low.rolling(9).min().iloc[-1]
+    tenkan = (high_9 + low_9) / 2
+    high_26 = high.rolling(26).max().iloc[-1]
+    low_26 = low.rolling(26).min().iloc[-1]
+    kijun = (high_26 + low_26) / 2
+    ichimoku = 1 if close.iloc[-1] > tenkan and close.iloc[-1] > kijun else -1 if close.iloc[-1] < tenkan and close.iloc[-1] < kijun else 0
+
+    atr = ta.volatility.AverageTrueRange(high, low, close, 10).average_true_range().iloc[-1] if not pd.isna(ta.volatility.AverageTrueRange(high, low, close, 10).average_true_range().iloc[-1]) else close.iloc[-1]*0.01
+    upper = (high.iloc[-1] + low.iloc[-1])/2 + 3*atr
+    lower = (high.iloc[-1] + low.iloc[-1])/2 - 3*atr
+    supertrend = 1 if close.iloc[-1] > upper else -1 if close.iloc[-1] < lower else 0
+
+    vwap = (volume * (high + low + close) / 3).sum() / volume.sum() if volume.sum() > 0 else close.iloc[-1]
+    vwap_signal = 1 if close.iloc[-1] > vwap else -1 if close.iloc[-1] < vwap else 0
+
+    def hma(series, period=20):
+        half = int(period/2)
+        sqrt_p = int(np.sqrt(period))
+        wma_half = series.rolling(half).apply(lambda x: np.sum(np.arange(1, half+1)*x)/np.sum(np.arange(1, half+1)) if len(x)==half else np.nan, raw=True)
+        wma_full = series.rolling(period).apply(lambda x: np.sum(np.arange(1, period+1)*x)/np.sum(np.arange(1, period+1)) if len(x)==period else np.nan, raw=True)
+        hma_series = 2*wma_half - wma_full
+        hma_series = hma_series.rolling(sqrt_p).apply(lambda x: np.sum(np.arange(1, sqrt_p+1)*x)/np.sum(np.arange(1, sqrt_p+1)) if len(x)==sqrt_p else np.nan, raw=True)
+        return hma_series.iloc[-1] if not pd.isna(hma_series.iloc[-1]) else close.iloc[-1]
+    hma_value = hma(close, 20)
+    hma_signal = 1 if close.iloc[-1] > hma_value else -1 if close.iloc[-1] < hma_value else 0
+
+    stoch_rsi = ta.momentum.StochRSIIndicator(close, 14, 3, 3)
+    stoch_rsi_k = stoch_rsi.stochrsi_k().iloc[-1] if not pd.isna(stoch_rsi.stochrsi_k().iloc[-1]) else 50
+    stoch_rsi_d = stoch_rsi.stochrsi_d().iloc[-1] if not pd.isna(stoch_rsi.stochrsi_d().iloc[-1]) else 50
+    stoch_rsi_signal = 1 if stoch_rsi_k < 20 and stoch_rsi_d < 20 else -1 if stoch_rsi_k > 80 and stoch_rsi_d > 80 else 0
+
+    return {
+        'rsi': rsi, 'macd_diff': macd_diff, 'macd_line': macd_line,
+        'macd_signal': macd_signal, 'ema9': ema9, 'ema21': ema21,
+        'bb_high': bb_high, 'bb_low': bb_low,
+        'stoch_k': stoch_k, 'stoch_d': stoch_d, 'adx': adx,
+        'ichimoku': ichimoku, 'supertrend': supertrend,
+        'vwap': vwap_signal, 'hma': hma_signal,
+        'stoch_rsi': stoch_rsi_signal,
+        'last_close': close.iloc[-1], 'atr': atr
+    }
 
 def get_weighted_signal(indicators):
-    # ... код
-    pass
+    weights = {'rsi':2,'macd':3,'ema':2,'bollinger':1,'stoch':1,
+               'adx':2,'ichimoku':2,'supertrend':2,'vwap':1,'hma':1,'stoch_rsi':1}
+    votes_long, votes_short = 0, 0
+    if indicators['rsi'] < 30: votes_long += weights['rsi']
+    elif indicators['rsi'] > 70: votes_short += weights['rsi']
+    if indicators['macd_diff'] > 0 and indicators['macd_line'] > indicators['macd_signal']:
+        votes_long += weights['macd']
+    elif indicators['macd_diff'] < 0 and indicators['macd_line'] < indicators['macd_signal']:
+        votes_short += weights['macd']
+    if indicators['ema9'] > indicators['ema21']:
+        votes_long += weights['ema']
+    else:
+        votes_short += weights['ema']
+    last = indicators['last_close']
+    if last <= indicators['bb_low']:
+        votes_long += weights['bollinger']
+    elif last >= indicators['bb_high']:
+        votes_short += weights['bollinger']
+    if indicators['stoch_k'] < 20 and indicators['stoch_d'] < 20:
+        votes_long += weights['stoch']
+    elif indicators['stoch_k'] > 80 and indicators['stoch_d'] > 80:
+        votes_short += weights['stoch']
+    if indicators['adx'] > 25:
+        if indicators['ema9'] > indicators['ema21']:
+            votes_long += weights['adx']
+        else:
+            votes_short += weights['adx']
+    if indicators['ichimoku'] > 0:
+        votes_long += weights['ichimoku']
+    elif indicators['ichimoku'] < 0:
+        votes_short += weights['ichimoku']
+    if indicators['supertrend'] > 0:
+        votes_long += weights['supertrend']
+    elif indicators['supertrend'] < 0:
+        votes_short += weights['supertrend']
+    if indicators['vwap'] > 0:
+        votes_long += weights['vwap']
+    elif indicators['vwap'] < 0:
+        votes_short += weights['vwap']
+    if indicators['hma'] > 0:
+        votes_long += weights['hma']
+    elif indicators['hma'] < 0:
+        votes_short += weights['hma']
+    if indicators['stoch_rsi'] > 0:
+        votes_long += weights['stoch_rsi']
+    elif indicators['stoch_rsi'] < 0:
+        votes_short += weights['stoch_rsi']
+    if votes_long > votes_short and votes_long >= 5:
+        return 'LONG'
+    elif votes_short > votes_long and votes_short >= 5:
+        return 'SHORT'
+    else:
+        return 'HOLD'
 
 def get_multi_timeframe_alignment(asset, primary_tf):
-    # ... код
-    pass
+    tf_list = ['1h', '4h']
+    signals = []
+    for tf in tf_list:
+        if tf == primary_tf:
+            continue
+        try:
+            df = get_market_data(asset, tf, limit=200)
+            if df is not None and not df.empty:
+                ind = compute_advanced_indicators(df)
+                signals.append(get_weighted_signal(ind))
+            else:
+                signals.append('HOLD')
+        except:
+            signals.append('HOLD')
+    long_count = signals.count('LONG')
+    short_count = signals.count('SHORT')
+    return long_count, short_count
 
 def calculate_risk_parameters(df, entry_price):
-    # ... код
-    pass
+    try:
+        atr = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], 14).average_true_range().iloc[-1]
+        if pd.isna(atr) or atr == 0:
+            atr = df['close'].iloc[-1] * 0.01
+        return {'stop_loss': entry_price - 2*atr, 'take_profit': entry_price + 3*atr, 'atr': atr}
+    except:
+        return {'stop_loss': entry_price * 0.98, 'take_profit': entry_price * 1.03, 'atr': entry_price * 0.01}
 
 def generate_signal(asset, duration):
-    # ... код
-    pass
+    timeframe = get_timeframe_from_duration(duration, asset)
+    limit = get_candle_limit(timeframe)
+    logger.info(f"Авто-таймфрейм: {timeframe}, лимит: {limit} для {duration} (актив: {asset})")
+
+    clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
+    df = get_market_data(clean_asset, timeframe, limit=limit)
+    if df is None or df.empty:
+        return {'signal': 'HOLD', 'strength': 'WEAK', 'emoji': '⚪', 'reason': 'Нет данных', 'indicators': None, 'risk': None, 'timeframe': timeframe}
+
+    ind = compute_advanced_indicators(df)
+    primary_signal = get_weighted_signal(ind)
+
+    long_tf, short_tf = get_multi_timeframe_alignment(clean_asset, timeframe)
+    tf_boost = 0
+    if primary_signal == 'LONG' and long_tf >= 2:
+        tf_boost = 1
+    elif primary_signal == 'SHORT' and short_tf >= 2:
+        tf_boost = 1
+    elif primary_signal == 'LONG' and short_tf >= 2:
+        tf_boost = -1
+    elif primary_signal == 'SHORT' and long_tf >= 2:
+        tf_boost = -1
+
+    if primary_signal == 'HOLD':
+        final_signal = 'HOLD'
+        strength = 'WEAK'
+        emoji = '⚪'
+    else:
+        if tf_boost == 1:
+            strength = 'STRONG'
+            final_signal = primary_signal
+        elif tf_boost == -1:
+            strength = 'WEAK'
+            final_signal = 'HOLD'
+        else:
+            strength = 'MEDIUM'
+            final_signal = primary_signal
+
+        if final_signal == 'LONG' and strength == 'STRONG':
+            emoji = '🟢'
+        elif final_signal == 'LONG' and strength == 'MEDIUM':
+            emoji = '🟡'
+        elif final_signal == 'LONG' and strength == 'WEAK':
+            emoji = '🟠'
+        elif final_signal == 'SHORT' and strength == 'STRONG':
+            emoji = '🔴'
+        elif final_signal == 'SHORT' and strength == 'MEDIUM':
+            emoji = '🟠'
+        elif final_signal == 'SHORT' and strength == 'WEAK':
+            emoji = '🟡'
+        else:
+            emoji = '⚪'
+
+    risk = calculate_risk_parameters(df, ind['last_close'])
+    reason = f"Таймфрейм: {timeframe} (авто), свечей: {len(df)}\nМульти-ТФ: {long_tf} LONG, {short_tf} SHORT на 1H/4H"
+    if tf_boost == 1:
+        reason += " → усиление сигнала"
+    elif tf_boost == -1:
+        reason += " → противоречие, сигнал ослаблен"
+
+    return {
+        'signal': final_signal,
+        'strength': strength,
+        'emoji': emoji,
+        'reason': reason,
+        'indicators': ind,
+        'risk': risk,
+        'timeframe': timeframe
+    }
 
 # ==================== МЕНЮ ====================
 CURRENCIES = ["AUD/USD OTC","EUR/USD OTC","EUR/RUB OTC","GBP/JPY OTC",
@@ -330,18 +520,13 @@ def build_keyboard(items, back=False, back_data=None, cols=2):
         keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data=back_data or "back")])
     return InlineKeyboardMarkup(keyboard)
 
-# ==================== ОБРАБОТЧИКИ (ГАРАНТИРОВАННО БЕЗ РЕДАКТИРОВАНИЯ ФОТО) ====================
+# ==================== ОБРАБОТЧИКИ ====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = ("🚀 *Торговый бот-ассистент*\n\n"
             "Я анализирую рынок и даю сигналы по активам из Pocket Option.\n"
             "Нажми **GO!** чтобы начать.")
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("GO!", callback_data="go")]])
-    await update.message.reply_photo(
-        photo=BANNER_IMAGES['welcome'],
-        caption=text,
-        parse_mode='Markdown',
-        reply_markup=keyboard
-    )
+    await update.message.reply_text(text, parse_mode='Markdown', reply_markup=keyboard)
 
 async def go(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -353,16 +538,7 @@ async def go(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📈 Акции", callback_data="stocks")],
         [InlineKeyboardButton("📊 Индексы", callback_data="indices")]
     ]
-    text = "Выберите раздел:"
-    try:
-        await query.message.delete()
-    except:
-        pass
-    await update.effective_chat.send_photo(
-        photo=BANNER_IMAGES['sections'],
-        caption=text,
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    await query.edit_message_text("Выберите раздел:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def section_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -379,19 +555,10 @@ async def section_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif section == "indices":
         items, title = INDICES, "📊 Индексы"
     else:
-        await update.effective_chat.send_message("Ошибка")
+        await query.edit_message_text("Ошибка")
         return
     keyboard = build_keyboard(items, back=True, back_data="go")
-    # Удаляем фото с выбором раздела
-    try:
-        await query.message.delete()
-    except:
-        pass
-    # Отправляем новое текстовое сообщение с кнопками
-    await update.effective_chat.send_message(
-        f"{title} (выберите актив):",
-        reply_markup=keyboard
-    )
+    await query.edit_message_text(f"{title} (выберите актив):", reply_markup=keyboard)
 
 async def asset_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -409,12 +576,7 @@ async def asset_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if "Message is not modified" in str(e):
             pass
         else:
-            # Если редактировать не удаётся – удаляем и отправляем новое
-            try:
-                await query.message.delete()
-            except:
-                pass
-            await update.effective_chat.send_message(text, parse_mode='Markdown', reply_markup=keyboard)
+            raise
 
 async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -476,19 +638,19 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]
         ]
 
+        # Отправляем картинку вместо текста
         image_url = SIGNAL_IMAGES.get(signal, SIGNAL_IMAGES['HOLD'])
-        # Удаляем сообщение с выбором времени
-        try:
-            await query.message.delete()
-        except:
-            pass
-        # Отправляем фото с сигналом
         await update.effective_chat.send_photo(
             photo=image_url,
             caption=msg,
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
+        # Удаляем сообщение с выбором времени
+        try:
+            await query.message.delete()
+        except:
+            pass
 
     except Exception as e:
         logger.error(f"duration error: {e}")
@@ -563,16 +725,16 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
 
         image_url = SIGNAL_IMAGES.get(signal, SIGNAL_IMAGES['HOLD'])
-        try:
-            await query.message.delete()
-        except:
-            pass
         await update.effective_chat.send_photo(
             photo=image_url,
             caption=msg,
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
+        try:
+            await query.message.delete()
+        except:
+            pass
 
     except Exception as e:
         logger.error(f"resignal error: {e}")
@@ -602,20 +764,7 @@ async def back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif back_to == "go":
         await go(update, context)
     elif back_to == "home":
-        try:
-            await query.message.delete()
-        except:
-            pass
-        text = ("🚀 *Торговый бот-ассистент*\n\n"
-                "Я анализирую рынок и даю сигналы по активам из Pocket Option.\n"
-                "Нажми **GO!** чтобы начать.")
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("GO!", callback_data="go")]])
-        await update.effective_chat.send_photo(
-            photo=BANNER_IMAGES['welcome'],
-            caption=text,
-            parse_mode='Markdown',
-            reply_markup=keyboard
-        )
+        await go(update, context)
     else:
         await go(update, context)
 
