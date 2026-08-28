@@ -25,11 +25,14 @@ if not BOT_TOKEN:
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ==================== КАРТИНКИ ДЛЯ СИГНАЛОВ (SHORT И HOLD ПОМЕНЯНЫ) ====================
+# ==================== ПРИВЕТСТВЕННЫЙ БАННЕР ====================
+WELCOME_BANNER = 'https://i.ibb.co/3Yjk8G6s/IMG-1470.jpg'   # первая картинка
+
+# ==================== КАРТИНКИ ДЛЯ СИГНАЛОВ ====================
 SIGNAL_IMAGES = {
     'LONG': 'https://i.ibb.co/0yRzq6zq/IMG-1465.jpg',
-    'SHORT': 'https://i.ibb.co/zHR8CvM7/IMG-1466.jpg',   # третья картинка
-    'HOLD': 'https://i.ibb.co/N22CvHZr/IMG-1467.jpg'     # вторая картинка
+    'SHORT': 'https://i.ibb.co/zHR8CvM7/IMG-1466.jpg',
+    'HOLD': 'https://i.ibb.co/N22CvHZr/IMG-1467.jpg'
 }
 
 # ==================== ИКОНКИ АКТИВОВ ====================
@@ -526,7 +529,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Я анализирую рынок и даю сигналы по активам из Pocket Option.\n"
             "Нажми **GO!** чтобы начать.")
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("GO!", callback_data="go")]])
-    await update.message.reply_text(text, parse_mode='Markdown', reply_markup=keyboard)
+    # Отправляем фото вместо текста
+    await update.message.reply_photo(
+        photo=WELCOME_BANNER,
+        caption=text,
+        parse_mode='Markdown',
+        reply_markup=keyboard
+    )
 
 async def go(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -538,6 +547,7 @@ async def go(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📈 Акции", callback_data="stocks")],
         [InlineKeyboardButton("📊 Индексы", callback_data="indices")]
     ]
+    # Оставляем текстовое редактирование
     await query.edit_message_text("Выберите раздел:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def section_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -638,7 +648,6 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]
         ]
 
-        # Отправляем картинку вместо текста
         image_url = SIGNAL_IMAGES.get(signal, SIGNAL_IMAGES['HOLD'])
         await update.effective_chat.send_photo(
             photo=image_url,
@@ -646,7 +655,6 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        # Удаляем сообщение с выбором времени
         try:
             await query.message.delete()
         except:
