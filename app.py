@@ -25,11 +25,17 @@ if not BOT_TOKEN:
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ==================== КАРТИНКИ ДЛЯ СИГНАЛОВ (SHORT И HOLD ПОМЕНЯНЫ) ====================
+# ==================== БАННЕРЫ ====================
+BANNER_IMAGES = {
+    'welcome': 'https://i.ibb.co/3Yjk8G6s/IMG-1470.jpg',   # первая картинка (приветствие)
+    'sections': 'https://i.ibb.co/wN0z4Vvy/IMG-1471.jpg'    # вторая картинка (выбор раздела)
+}
+
+# ==================== КАРТИНКИ ДЛЯ СИГНАЛОВ ====================
 SIGNAL_IMAGES = {
     'LONG': 'https://i.ibb.co/0yRzq6zq/IMG-1465.jpg',
-    'SHORT': 'https://i.ibb.co/zHR8CvM7/IMG-1466.jpg',   # третья картинка
-    'HOLD': 'https://i.ibb.co/N22CvHZr/IMG-1467.jpg'     # вторая картинка
+    'SHORT': 'https://i.ibb.co/zHR8CvM7/IMG-1466.jpg',
+    'HOLD': 'https://i.ibb.co/N22CvHZr/IMG-1467.jpg'
 }
 
 # ==================== ИКОНКИ АКТИВОВ ====================
@@ -520,15 +526,22 @@ def build_keyboard(items, back=False, back_data=None, cols=2):
         keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data=back_data or "back")])
     return InlineKeyboardMarkup(keyboard)
 
-# ==================== ОБРАБОТЧИКИ ====================
+# ==================== ОБРАБОТЧИКИ (С БАННЕРАМИ) ====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Приветственное сообщение с первой картинкой"""
     text = ("🚀 *Торговый бот-ассистент*\n\n"
             "Я анализирую рынок и даю сигналы по активам из Pocket Option.\n"
             "Нажми **GO!** чтобы начать.")
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("GO!", callback_data="go")]])
-    await update.message.reply_text(text, parse_mode='Markdown', reply_markup=keyboard)
+    await update.message.reply_photo(
+        photo=BANNER_IMAGES['welcome'],
+        caption=text,
+        parse_mode='Markdown',
+        reply_markup=keyboard
+    )
 
 async def go(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Экран выбора раздела со второй картинкой"""
     query = update.callback_query
     await query.answer()
     keyboard = [
@@ -538,8 +551,20 @@ async def go(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📈 Акции", callback_data="stocks")],
         [InlineKeyboardButton("📊 Индексы", callback_data="indices")]
     ]
-    await query.edit_message_text("Выберите раздел:", reply_markup=InlineKeyboardMarkup(keyboard))
+    text = "Выберите раздел:"
+    # Удаляем старое сообщение (с приветствием и первой картинкой)
+    try:
+        await query.message.delete()
+    except:
+        pass
+    # Отправляем новое фото (второй баннер) с текстом и кнопками
+    await update.effective_chat.send_photo(
+        photo=BANNER_IMAGES['sections'],
+        caption=text,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
+# ==================== ОСТАЛЬНЫЕ ОБРАБОТЧИКИ (без изменений) ====================
 async def section_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -638,7 +663,6 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]
         ]
 
-        # Отправляем картинку вместо текста
         image_url = SIGNAL_IMAGES.get(signal, SIGNAL_IMAGES['HOLD'])
         await update.effective_chat.send_photo(
             photo=image_url,
@@ -646,7 +670,6 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        # Удаляем сообщение с выбором времени
         try:
             await query.message.delete()
         except:
@@ -754,6 +777,7 @@ async def back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     back_to = query.data
     if back_to == "back_to_section":
+        # Возврат к выбору раздела – отправляем второй баннер
         await go(update, context)
     elif back_to == "back_to_asset":
         asset = context.user_data.get('asset')
@@ -764,7 +788,23 @@ async def back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif back_to == "go":
         await go(update, context)
     elif back_to == "home":
-        await go(update, context)
+        # Возврат в главное меню – отправляем первый баннер (приветствие)
+        # Удаляем текущее сообщение и запускаем /start (эквивалент)
+        try:
+            await query.message.delete()
+        except:
+            pass
+        # Отправляем приветствие с первой картинкой
+        text = ("🚀 *Торговый бот-ассистент*\n\n"
+                "Я анализирую рынок и даю сигналы по активам из Pocket Option.\n"
+                "Нажми **GO!** чтобы начать.")
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("GO!", callback_data="go")]])
+        await update.effective_chat.send_photo(
+            photo=BANNER_IMAGES['welcome'],
+            caption=text,
+            parse_mode='Markdown',
+            reply_markup=keyboard
+        )
     else:
         await go(update, context)
 
