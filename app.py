@@ -219,10 +219,9 @@ def fetch_yfinance(symbol, timeframe, limit, is_index=False):
     interval = YFINANCE_INTERVAL_MAP.get(timeframe, timeframe)
     if timeframe == '4h':
         interval = '1h'
-    # Уменьшаем задержку до 1 секунды и добавляем таймаут
-    time.sleep(1)
+    time.sleep(3)
     ticker = yf.Ticker(symbol)
-    df = ticker.history(period='30d', interval=interval, timeout=10)
+    df = ticker.history(period='30d', interval=interval)
     if df.empty:
         raise Exception("Нет данных Yahoo")
     if timeframe == '4h':
@@ -601,7 +600,6 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("Уже обрабатываю...")
         return
     context.user_data['processing'] = True
-
     await query.answer()
     duration = query.data
     if duration in ['back_to_asset', 'back_to_section', 'go', 'home']:
@@ -619,11 +617,7 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(f"{icon} ⏳ Анализирую рынок...")
     try:
         clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
-        # Запускаем генерацию сигнала с таймаутом 35 секунд
-        result = await asyncio.wait_for(
-            asyncio.to_thread(generate_signal, clean_asset, duration),
-            timeout=35.0
-        )
+        result = generate_signal(clean_asset, duration)
         signal = result['signal']
         strength = result['strength']
         emoji = result['emoji']
@@ -661,10 +655,12 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
 
         image_url = SIGNAL_IMAGES.get(signal, SIGNAL_IMAGES['HOLD'])
+        # Удаляем сообщение с выбором времени
         try:
             await query.message.delete()
         except:
             pass
+        # Отправляем фото с сигналом
         await update.effective_chat.send_photo(
             photo=image_url,
             caption=msg,
@@ -672,13 +668,6 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
-    except asyncio.TimeoutError:
-        logger.error("Timeout in generate_signal")
-        keyboard = [[InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]]
-        await update.effective_chat.send_message(
-            "⏰ Превышено время ожидания ответа от источника данных. Попробуйте позже.",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
     except Exception as e:
         logger.error(f"duration error: {e}")
         keyboard = [[InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]]
@@ -691,6 +680,8 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 raise
     finally:
         context.user_data['processing'] = False
+        # Принудительно освобождаем память (небольшая задержка)
+        await asyncio.sleep(0.1)
 
 async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -715,6 +706,7 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(f"{icon} ⏳ Анализирую рынок...")
     try:
         clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
+        # Вызываем generate_signal с теми же параметрами
         result = await asyncio.wait_for(
             asyncio.to_thread(generate_signal, clean_asset, duration),
             timeout=35.0
