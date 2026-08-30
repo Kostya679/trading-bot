@@ -596,28 +596,34 @@ async def asset_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    # Если уже обрабатывается – просто выходим, не блокируем
     if context.user_data.get('processing', False):
-        await query.answer("Уже обрабатываю...")
+        await query.answer("⏳ Уже идёт анализ...")
         return
     context.user_data['processing'] = True
-    await query.answer()
-    duration = query.data
-    if duration in ['back_to_asset', 'back_to_section', 'go', 'home']:
-        context.user_data['processing'] = False
-        return
 
-    asset = context.user_data.get('asset')
-    if not asset or asset in ['back_to_asset', 'back_to_section', 'go', 'home']:
-        await query.edit_message_text("⚠️ Ошибка: выберите актив заново.")
-        context.user_data['processing'] = False
-        return
-
-    context.user_data['duration'] = duration
-    icon = ASSET_ICONS.get(asset, "")
-    await query.edit_message_text(f"{icon} ⏳ Анализирую рынок...")
     try:
+        await query.answer()
+        duration = query.data
+        if duration in ['back_to_asset', 'back_to_section', 'go', 'home']:
+            return
+
+        asset = context.user_data.get('asset')
+        if not asset or asset in ['back_to_asset', 'back_to_section', 'go', 'home']:
+            await query.edit_message_text("⚠️ Ошибка: выберите актив заново.")
+            return
+
+        context.user_data['duration'] = duration
+        icon = ASSET_ICONS.get(asset, "")
+        await query.edit_message_text(f"{icon} ⏳ Анализирую рынок...")
+
         clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
-        result = generate_signal(clean_asset, duration)
+        # Генерация сигнала с таймаутом 30 секунд
+        result = await asyncio.wait_for(
+            asyncio.to_thread(generate_signal, clean_asset, duration),
+            timeout=30.0
+        )
+
         signal = result['signal']
         strength = result['strength']
         emoji = result['emoji']
@@ -655,12 +661,10 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
 
         image_url = SIGNAL_IMAGES.get(signal, SIGNAL_IMAGES['HOLD'])
-        # Удаляем сообщение с выбором времени
         try:
             await query.message.delete()
         except:
             pass
-        # Отправляем фото с сигналом
         await update.effective_chat.send_photo(
             photo=image_url,
             caption=msg,
@@ -668,49 +672,51 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
-    except Exception as e:
-        logger.error(f"duration error: {e}")
+    except asyncio.TimeoutError:
+        logger.error("Timeout in duration_selected")
         keyboard = [[InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]]
-        try:
-            await query.edit_message_text(f"❌ Ошибка: {str(e)}", reply_markup=InlineKeyboardMarkup(keyboard))
-        except BadRequest as ex:
-            if "Message is not modified" in str(ex):
-                pass
-            else:
-                raise
+        await update.effective_chat.send_message(
+            "⏰ Превышено время ожидания. Попробуйте позже.",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    except Exception as e:
+        logger.error(f"duration_selected error: {e}")
+        keyboard = [[InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]]
+        await update.effective_chat.send_message(
+            f"❌ Ошибка: {str(e)}",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
     finally:
-        context.user_data['processing'] = False
-        # Принудительно освобождаем память (небольшая задержка)
-        await asyncio.sleep(0.1)
+        context.user_data['processing'] = False  # ГАРАНТИРОВАННЫЙ СБРОС
 
 async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if context.user_data.get('processing', False):
-        await query.answer("Уже обрабатываю...")
+        await query.answer("⏳ Уже идёт анализ...")
         return
     context.user_data['processing'] = True
 
-    await query.answer()
-    asset = context.user_data.get('asset')
-    duration = context.user_data.get('duration')
-    if not asset or not duration:
-        await query.edit_message_text("Ошибка: данные потеряны. Начните заново /start")
-        context.user_data['processing'] = False
-        return
-    if asset in ['back_to_asset', 'back_to_section', 'go', 'home']:
-        await query.edit_message_text("Ошибка: выберите актив заново.")
-        context.user_data['processing'] = False
-        return
-
-    icon = ASSET_ICONS.get(asset, "")
-    await query.edit_message_text(f"{icon} ⏳ Анализирую рынок...")
     try:
+        await query.answer()
+        asset = context.user_data.get('asset')
+        duration = context.user_data.get('duration')
+        if not asset or not duration:
+            await query.edit_message_text("Ошибка: данные потеряны. Начните заново /start")
+            return
+        if asset in ['back_to_asset', 'back_to_section', 'go', 'home']:
+            await query.edit_message_text("Ошибка: выберите актив заново.")
+            return
+
+        icon = ASSET_ICONS.get(asset, "")
+        await query.edit_message_text(f"{icon} ⏳ Анализирую рынок...")
+
         clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
-        # Вызываем generate_signal с теми же параметрами
+        # Генерация сигнала с таймаутом 30 секунд
         result = await asyncio.wait_for(
             asyncio.to_thread(generate_signal, clean_asset, duration),
-            timeout=35.0
+            timeout=30.0
         )
+
         signal = result['signal']
         strength = result['strength']
         emoji = result['emoji']
@@ -763,21 +769,18 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Timeout in resignal")
         keyboard = [[InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]]
         await update.effective_chat.send_message(
-            "⏰ Превышено время ожидания ответа от источника данных. Попробуйте позже.",
+            "⏰ Превышено время ожидания. Попробуйте позже.",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
     except Exception as e:
         logger.error(f"resignal error: {e}")
         keyboard = [[InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]]
-        try:
-            await query.edit_message_text(f"❌ Ошибка: {str(e)}", reply_markup=InlineKeyboardMarkup(keyboard))
-        except BadRequest as ex:
-            if "Message is not modified" in str(ex):
-                pass
-            else:
-                raise
+        await update.effective_chat.send_message(
+            f"❌ Ошибка: {str(e)}",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
     finally:
-        context.user_data['processing'] = False
+        context.user_data['processing'] = False  # ГАРАНТИРОВАННЫЙ СБРОС
 
 async def back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
