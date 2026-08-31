@@ -697,7 +697,8 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['processing'] = True
 
     try:
-        await query.answer()
+        await query.answer("⏳ Анализирую рынок...")  # всплывающее уведомление вместо редактирования
+
         asset = context.user_data.get('asset')
         duration = context.user_data.get('duration')
         if not asset or not duration:
@@ -708,10 +709,8 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         icon = ASSET_ICONS.get(asset, "")
-        await query.edit_message_text(f"{icon} ⏳ Анализирую рынок...")
 
         clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
-        # Генерация сигнала с таймаутом 30 секунд
         result = await asyncio.wait_for(
             asyncio.to_thread(generate_signal, clean_asset, duration),
             timeout=30.0
@@ -754,10 +753,12 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
 
         image_url = SIGNAL_IMAGES.get(signal, SIGNAL_IMAGES['HOLD'])
+        # Удаляем старое сообщение (кнопки)
         try:
             await query.message.delete()
         except:
             pass
+        # Отправляем новое фото с сигналом
         await update.effective_chat.send_photo(
             photo=image_url,
             caption=msg,
@@ -775,13 +776,25 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"resignal error: {e}")
         keyboard = [[InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]]
-        await update.effective_chat.send_message(
-            f"❌ Ошибка: {str(e)}",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        try:
+            # Если есть текст, редактируем, иначе отправляем новое
+            await query.edit_message_text(
+                f"❌ Ошибка: {str(e)}",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        except BadRequest:
+            # Если редактировать нельзя – удаляем и отправляем новое
+            try:
+                await query.message.delete()
+            except:
+                pass
+            await update.effective_chat.send_message(
+                f"❌ Ошибка: {str(e)}",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
     finally:
-        context.user_data['processing'] = False  # ГАРАНТИРОВАННЫЙ СБРОС
-
+        context.user_data['processing'] = False
+        
 async def back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
