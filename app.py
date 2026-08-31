@@ -13,7 +13,7 @@ import ta
 import requests
 from flask import Flask
 import threading
-from telegram.error import BadRequest
+from telegram.error import BadRequest, Conflict
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -75,8 +75,6 @@ BINANCE_INTERVAL_MAP = {
 }
 
 COMMODITY_SYMBOLS = ['Gold', 'Silver', 'Oil', 'Natural Gas']
-
-# Список индексов (для распознавания)
 INDEX_SYMBOLS = ['S&P 500', 'NASDAQ', 'Dow Jones', 'Nikkei 225']
 
 def get_timeframe_from_duration(duration, asset_name):
@@ -89,25 +87,19 @@ def get_timeframe_from_duration(duration, asset_name):
     else:
         seconds = 60
 
-    # Определяем тип актива
     is_commodity = any(comm in asset_name for comm in COMMODITY_SYMBOLS)
     is_index = any(idx in asset_name for idx in INDEX_SYMBOLS)
 
-    # Для индексов — минимальный таймфрейм 15m (или 1h, если время > 1h)
     if is_index:
-        if seconds <= 900:   # <= 15 мин
+        if seconds <= 900:
             return '15m'
         else:
-            return '1h'      # для более длительных используем 1h
-
-    # Для сырья — уже есть логика
+            return '1h'
     if is_commodity:
         if seconds <= 900:
             return '15m'
         else:
             return '1h'
-
-    # Для остальных (валюты, крипто, акции)
     if seconds <= 60:
         return '1m'
     elif seconds <= 300:
@@ -539,7 +531,7 @@ def build_keyboard(items, back=False, back_data=None, cols=2):
         keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data=back_data or "back")])
     return InlineKeyboardMarkup(keyboard)
 
-# ==================== ОБРАБОТЧИКИ ====================
+# ==================== ОБРАБОТЧИКИ (без изменений) ====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = ("🚀 *Торговый бот-ассистент*\n\n"
             "Я анализирую рынок и даю сигналы по активам из Pocket Option.\n"
@@ -611,7 +603,6 @@ async def asset_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    # Если уже обрабатывается – просто выходим, не блокируем
     if context.user_data.get('processing', False):
         await query.answer("⏳ Уже идёт анализ...")
         return
@@ -633,7 +624,6 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"{icon} ⏳ Анализирую рынок...")
 
         clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
-        # Генерация сигнала с таймаутом 30 секунд
         result = await asyncio.wait_for(
             asyncio.to_thread(generate_signal, clean_asset, duration),
             timeout=30.0
@@ -702,7 +692,7 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
     finally:
-        context.user_data['processing'] = False  # ГАРАНТИРОВАННЫЙ СБРОС
+        context.user_data['processing'] = False
 
 async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -723,12 +713,10 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         icon = ASSET_ICONS.get(asset, "")
-        # 1. Удаляем старое сообщение с сигналом (кнопки)
         try:
             await query.message.delete()
         except:
             pass
-        # 2. Отправляем временное сообщение "Анализирую..."
         temp_msg = await update.effective_chat.send_message(f"{icon} ⏳ Анализирую рынок...")
 
         clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
@@ -774,14 +762,12 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
 
         image_url = SIGNAL_IMAGES.get(signal, SIGNAL_IMAGES['HOLD'])
-        # 3. Отправляем финальный сигнал с фото
         await update.effective_chat.send_photo(
             photo=image_url,
             caption=msg,
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        # 4. Удаляем временное сообщение (после отправки сигнала, чтобы не было разрыва)
         try:
             await temp_msg.delete()
         except:
@@ -826,7 +812,37 @@ async def back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Update {update} caused error {context.error}")
 
-# ==================== ЗАПУСК ====================
+# ==================== ЗАПУСК (С ПРАВИЛЬНЫМ URL) ====================
+RENDER_URL = "https://mega-trade-bot.onrender.com"  # твой URL
+
+def run_bot():
+    while True:
+        try:
+            app = Application.builder().token(BOT_TOKEN).build()
+            app.add_handler(CommandHandler("start", start))
+            app.add_handler(CallbackQueryHandler(go, pattern="^go$"))
+            app.add_handler(CallbackQueryHandler(section_handler, pattern="^(currencies|crypto|commodities|stocks|indices)$"))
+            app.add_handler(CallbackQueryHandler(asset_selected, pattern="^(" + "|".join(CURRENCIES+CRYPTO+COMMODITIES+STOCKS+INDICES) + ")$"))
+            app.add_handler(CallbackQueryHandler(duration_selected, pattern="^(" + "|".join(DURATIONS) + ")$"))
+            app.add_handler(CallbackQueryHandler(resignal, pattern="^resignal$"))
+            app.add_handler(CallbackQueryHandler(back_handler, pattern="^(back_to_section|back_to_asset|go|home)$"))
+            app.add_error_handler(error_handler)
+
+            import asyncio
+            asyncio.run(app.bot.delete_webhook())
+
+            logger.info("Бот запущен!")
+            app.run_polling(allowed_updates=Update.ALL_TYPES)
+            break
+        except Conflict as e:
+            logger.warning(f"Conflict: {e}. Перезапуск через 10 секунд...")
+            time.sleep(10)
+            continue
+        except Exception as e:
+            logger.error(f"Бот упал с ошибкой: {e}. Перезапуск через 10 секунд...")
+            time.sleep(10)
+            continue
+
 def main():
     flask_app = Flask(__name__)
     @flask_app.route('/')
@@ -836,20 +852,20 @@ def main():
     def run_flask():
         flask_app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
 
-    # Запускаем Flask в отдельном потоке
     threading.Thread(target=run_flask, daemon=True).start()
     logger.info("Flask запущен")
 
-    # Запускаем keep-alive поток (каждые 3 минуты)
     def keep_alive():
         while True:
             try:
-                requests.get('http://localhost:10000')
+                requests.get(RENDER_URL, timeout=5)
                 logger.info("✅ Self-ping успешен")
             except Exception as e:
                 logger.warning(f"❌ Self-ping ошибка: {e}")
-            time.sleep(180)  # 3 минуты
-    threading.Thread(target=keep_alive, daemon=True).start()
+            time.sleep(60)  # 1 минута
 
-    # Запускаем бота
+    threading.Thread(target=keep_alive, daemon=True).start()
     run_bot()
+
+if __name__ == "__main__":
+    main()
