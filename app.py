@@ -531,7 +531,7 @@ def build_keyboard(items, back=False, back_data=None, cols=2):
         keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data=back_data or "back")])
     return InlineKeyboardMarkup(keyboard)
 
-# ==================== ОБРАБОТЧИКИ (без изменений) ====================
+# ==================== ОБРАБОТЧИКИ ====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = ("🚀 *Торговый бот-ассистент*\n\n"
             "Я анализирую рынок и даю сигналы по активам из Pocket Option.\n"
@@ -812,10 +812,11 @@ async def back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Update {update} caused error {context.error}")
 
-# ==================== ЗАПУСК (С ПРАВИЛЬНЫМ URL) ====================
-RENDER_URL = "https://mega-trade-bot.onrender.com"  # твой URL
+# ==================== ЗАПУСК (С КОРРЕКТНЫМ ЦИКЛОМ И KEEP-ALIVE) ====================
+RENDER_URL = "https://mega-trade-bot.onrender.com"  # ЗАМЕНИ НА СВОЙ URL
 
 def run_bot():
+    """Запускает бота с автоматическим перезапуском при падении."""
     while True:
         try:
             app = Application.builder().token(BOT_TOKEN).build()
@@ -828,12 +829,10 @@ def run_bot():
             app.add_handler(CallbackQueryHandler(back_handler, pattern="^(back_to_section|back_to_asset|go|home)$"))
             app.add_error_handler(error_handler)
 
-            import asyncio
-            asyncio.run(app.bot.delete_webhook())
-
+            # run_polling сам удалит вебхук и создаст правильный цикл событий
             logger.info("Бот запущен!")
             app.run_polling(allowed_updates=Update.ALL_TYPES)
-            break
+            break  # если нормально завершился, выходим из цикла
         except Conflict as e:
             logger.warning(f"Conflict: {e}. Перезапуск через 10 секунд...")
             time.sleep(10)
@@ -852,9 +851,11 @@ def main():
     def run_flask():
         flask_app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
 
+    # Запускаем Flask в фоне
     threading.Thread(target=run_flask, daemon=True).start()
     logger.info("Flask запущен")
 
+    # Keep-alive: каждую минуту пингуем внешний URL, чтобы Render не уснул
     def keep_alive():
         while True:
             try:
@@ -862,9 +863,11 @@ def main():
                 logger.info("✅ Self-ping успешен")
             except Exception as e:
                 logger.warning(f"❌ Self-ping ошибка: {e}")
-            time.sleep(60)  # 1 минута
+            time.sleep(60)
 
     threading.Thread(target=keep_alive, daemon=True).start()
+
+    # Запускаем бота
     run_bot()
 
 if __name__ == "__main__":
