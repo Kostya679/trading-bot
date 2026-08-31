@@ -76,6 +76,9 @@ BINANCE_INTERVAL_MAP = {
 
 COMMODITY_SYMBOLS = ['Gold', 'Silver', 'Oil', 'Natural Gas']
 
+# Список индексов (для распознавания)
+INDEX_SYMBOLS = ['S&P 500', 'NASDAQ', 'Dow Jones', 'Nikkei 225']
+
 def get_timeframe_from_duration(duration, asset_name):
     if duration.endswith('s'):
         seconds = int(duration[:-1])
@@ -86,23 +89,35 @@ def get_timeframe_from_duration(duration, asset_name):
     else:
         seconds = 60
 
+    # Определяем тип актива
     is_commodity = any(comm in asset_name for comm in COMMODITY_SYMBOLS)
+    is_index = any(idx in asset_name for idx in INDEX_SYMBOLS)
+
+    # Для индексов — минимальный таймфрейм 15m (или 1h, если время > 1h)
+    if is_index:
+        if seconds <= 900:   # <= 15 мин
+            return '15m'
+        else:
+            return '1h'      # для более длительных используем 1h
+
+    # Для сырья — уже есть логика
     if is_commodity:
         if seconds <= 900:
             return '15m'
         else:
             return '1h'
+
+    # Для остальных (валюты, крипто, акции)
+    if seconds <= 60:
+        return '1m'
+    elif seconds <= 300:
+        return '5m'
+    elif seconds <= 900:
+        return '15m'
+    elif seconds <= 3600:
+        return '1h'
     else:
-        if seconds <= 60:
-            return '1m'
-        elif seconds <= 300:
-            return '5m'
-        elif seconds <= 900:
-            return '15m'
-        elif seconds <= 3600:
-            return '1h'
-        else:
-            return '1h'
+        return '1h'
 
 def get_candle_limit(timeframe):
     return {'1m':500, '5m':400, '15m':300, '1h':200}.get(timeframe, 300)
@@ -817,23 +832,24 @@ def main():
     @flask_app.route('/')
     def home():
         return "Bot is running!"
+
     def run_flask():
         flask_app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
+
+    # Запускаем Flask в отдельном потоке
     threading.Thread(target=run_flask, daemon=True).start()
     logger.info("Flask запущен")
 
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(go, pattern="^go$"))
-    app.add_handler(CallbackQueryHandler(section_handler, pattern="^(currencies|crypto|commodities|stocks|indices)$"))
-    app.add_handler(CallbackQueryHandler(asset_selected, pattern="^(" + "|".join(CURRENCIES+CRYPTO+COMMODITIES+STOCKS+INDICES) + ")$"))
-    app.add_handler(CallbackQueryHandler(duration_selected, pattern="^(" + "|".join(DURATIONS) + ")$"))
-    app.add_handler(CallbackQueryHandler(resignal, pattern="^resignal$"))
-    app.add_handler(CallbackQueryHandler(back_handler, pattern="^(back_to_section|back_to_asset|go|home)$"))
-    app.add_error_handler(error_handler)
+    # Запускаем keep-alive поток (каждые 3 минуты)
+    def keep_alive():
+        while True:
+            try:
+                requests.get('http://localhost:10000')
+                logger.info("✅ Self-ping успешен")
+            except Exception as e:
+                logger.warning(f"❌ Self-ping ошибка: {e}")
+            time.sleep(180)  # 3 минуты
+    threading.Thread(target=keep_alive, daemon=True).start()
 
-    logger.info("Бот запущен!")
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
+    # Запускаем бота
+    run_bot()
