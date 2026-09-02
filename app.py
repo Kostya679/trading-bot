@@ -2,7 +2,7 @@ import os
 import logging
 import time
 import asyncio
-from datetime import datetime
+from datetime import datetime, time as datetime_time
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
@@ -26,17 +26,17 @@ if not BOT_TOKEN:
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ==================== ПРИВЕТСТВЕННЫЙ БАННЕР ====================
-WELCOME_BANNER = 'https://i.ibb.co/3Yjk8G6s/IMG-1470.jpg'
+# ==================== КОНСТАНТЫ УЛУЧШЕНИЙ ====================
+RENDER_URL = "https://mega-trade-bot.onrender.com"  # ЗАМЕНИ НА СВОЙ URL
+CANDLE_LIMITS = {'1m': 1000, '5m': 800, '15m': 600, '1h': 400, '4h': 300}
 
-# ==================== КАРТИНКИ ДЛЯ СИГНАЛОВ ====================
+# ==================== БАННЕРЫ И ИКОНКИ ====================
+WELCOME_BANNER = 'https://i.ibb.co/3Yjk8G6s/IMG-1470.jpg'
 SIGNAL_IMAGES = {
     'LONG': 'https://i.ibb.co/0yRzq6zq/IMG-1465.jpg',
     'SHORT': 'https://i.ibb.co/zHR8CvM7/IMG-1466.jpg',
     'HOLD': 'https://i.ibb.co/N22CvHZr/IMG-1467.jpg'
 }
-
-# ==================== ИКОНКИ АКТИВОВ ====================
 ASSET_ICONS = {
     "AUD/USD OTC": "🇦🇺", "EUR/USD OTC": "🇪🇺", "EUR/RUB OTC": "🇪🇺🇷🇺",
     "GBP/JPY OTC": "🇬🇧🇯🇵", "USD/CAD OTC": "🇺🇸🇨🇦", "USD/CHF OTC": "🇺🇸🇨🇭",
@@ -57,7 +57,6 @@ YFINANCE_INTERVAL_MAP = {
     '15m': '15m', '20m': '30m', '25m': '30m', '30m': '30m',
     '45m': '1h', '1h': '1h', '2h': '1h', '3h': '1h', '4h': '1h'
 }
-
 TWELVEDATA_INTERVAL_MAP = {
     '5s': '1min', '10s': '1min', '15s': '1min', '30s': '1min',
     '1m': '1min', '2m': '1min', '3m': '5min', '4m': '5min',
@@ -65,7 +64,6 @@ TWELVEDATA_INTERVAL_MAP = {
     '15m': '15min', '20m': '30min', '25m': '30min', '30m': '30min',
     '45m': '1h', '1h': '1h', '2h': '4h', '3h': '4h', '4h': '4h'
 }
-
 BINANCE_INTERVAL_MAP = {
     '5s': '1m', '10s': '1m', '15s': '1m', '30s': '1m',
     '1m': '1m', '2m': '1m', '3m': '5m', '4m': '5m',
@@ -73,7 +71,6 @@ BINANCE_INTERVAL_MAP = {
     '15m': '15m', '20m': '30m', '25m': '30m', '30m': '30m',
     '45m': '1h', '1h': '1h', '2h': '4h', '3h': '4h', '4h': '4h'
 }
-
 COMMODITY_SYMBOLS = ['Gold', 'Silver', 'Oil', 'Natural Gas']
 INDEX_SYMBOLS = ['S&P 500', 'NASDAQ', 'Dow Jones', 'Nikkei 225']
 
@@ -112,7 +109,7 @@ def get_timeframe_from_duration(duration, asset_name):
         return '1h'
 
 def get_candle_limit(timeframe):
-    return {'1m':500, '5m':400, '15m':300, '1h':200}.get(timeframe, 300)
+    return CANDLE_LIMITS.get(timeframe, 300)
 
 # ==================== КОНФИГУРАЦИЯ АКТИВОВ ====================
 SYMBOL_CONFIG = {
@@ -125,102 +122,121 @@ SYMBOL_CONFIG = {
     "OIL": {"twelvedata": "WTI", "yfinance": "CL=F", "primary": "yfinance"},
     "NATURAL GAS": {"twelvedata": "NG", "yfinance": "NG=F", "primary": "yfinance"}
 }
-
 STOCK_ALTERNATIVES = {
     "GOOGL": ["GOOG"], "AMZN": ["AMZN"], "AAPL": ["AAPL"],
     "TSLA": ["TSLA"], "MSFT": ["MSFT"], "NVDA": ["NVDA"]
 }
-
 FOREX_LIST = [
     'AUDUSD', 'EURUSD', 'EURGBP', 'EURJPY', 'GBPJPY', 'USDCAD', 'USDCHF',
     'USDJPY', 'GBPUSD', 'NZDUSD', 'EURCHF', 'GBPAUD', 'AUDJPY', 'CADJPY',
     'CHFJPY', 'EURNZD', 'GBPCAD', 'GBPNZD', 'NZDCAD', 'AUDCAD', 'AUDCHF',
     'GBPCHF', 'USDCNH', 'USDHKD', 'USDMXN', 'USDSEK', 'USDSGD', 'USDZAR'
 ]
-
 CRYPTO_LIST = ['BTC', 'ETH', 'LTC', 'XRP', 'SOL', 'ADA', 'DOT', 'LINK', 'BNB']
 
+# ==================== НОВЫЕ УЛУЧШЕНИЯ ====================
+def detect_candle_patterns(df):
+    """Определяет свечные паттерны на последней свече."""
+    if len(df) < 2:
+        return {'engulfing': 0, 'hammer': 0, 'doji': 0}
+
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+
+    body = abs(last['close'] - last['open'])
+    upper_wick = last['high'] - max(last['close'], last['open'])
+    lower_wick = min(last['close'], last['open']) - last['low']
+    total_range = last['high'] - last['low']
+
+    # 1. Бычье/медвежье поглощение
+    bullish_engulfing = (last['close'] > last['open'] and 
+                         prev['close'] < prev['open'] and 
+                         last['close'] > prev['open'] and 
+                         last['open'] < prev['close'])
+    bearish_engulfing = (last['close'] < last['open'] and 
+                         prev['close'] > prev['open'] and 
+                         last['close'] < prev['open'] and 
+                         last['open'] > prev['close'])
+    engulfing = 1 if bullish_engulfing else -1 if bearish_engulfing else 0
+
+    # 2. Молот (длинная нижняя тень)
+    hammer = 0
+    if total_range > 0 and lower_wick > 2 * body and upper_wick < body * 0.3:
+        hammer = 1 if last['close'] > last['open'] else -1
+
+    # 3. Доджи (очень маленькое тело)
+    doji = 1 if body < total_range * 0.1 else 0
+
+    return {'engulfing': engulfing, 'hammer': hammer, 'doji': doji}
+
+def calculate_pivot_points(df):
+    """Рассчитывает дневные уровни пивот."""
+    if len(df) < 2:
+        return None
+    high = df['high'].max()
+    low = df['low'].min()
+    close = df['close'].iloc[-1]
+    pivot = (high + low + close) / 3
+    r1 = 2 * pivot - low
+    s1 = 2 * pivot - high
+    r2 = pivot + (high - low)
+    s2 = pivot - (high - low)
+    return {'pivot': pivot, 'r1': r1, 'r2': r2, 's1': s1, 's2': s2}
+
+def volume_analysis(df):
+    """Анализирует объём: сравнивает текущий объём со средним за 20 свечей."""
+    if len(df) < 20:
+        return 0
+    avg_volume = df['volume'].iloc[-20:].mean()
+    current_volume = df['volume'].iloc[-1]
+    if current_volume > avg_volume * 1.5:
+        return 1
+    elif current_volume < avg_volume * 0.5:
+        return -1
+    return 0
+
+def get_session(time_utc):
+    """Определяет торговую сессию по UTC."""
+    hour = time_utc.hour
+    if 0 <= hour < 8:
+        return "ASIA"
+    elif 8 <= hour < 14:
+        return "LONDON"
+    elif 14 <= hour < 22:
+        return "NEW_YORK"
+    else:
+        return "OVERLAP"
+
 # ==================== ФУНКЦИИ ПОЛУЧЕНИЯ ДАННЫХ ====================
-def get_market_data(symbol, timeframe, limit=300):
-    clean = symbol.upper().replace('=X', '').replace('_OTC', '').replace('USDT', '').replace('BUSD', '')
-    clean = clean.replace('/', '')
-    if clean in ['BACK_TO_ASSET', 'BACK_TO_SECTION', 'GO', 'HOME']:
-        raise Exception("Служебная кнопка")
-
-    is_crypto = any(clean.startswith(c) for c in CRYPTO_LIST)
-    if is_crypto:
-        base = next((c for c in CRYPTO_LIST if clean.startswith(c)), None)
-        if base:
-            try:
-                symbol_binance = f"{base}USDT"
-                logger.info(f"Крипто: {symbol_binance} через Binance")
-                return fetch_binance(symbol_binance, timeframe, limit)
-            except Exception as e:
-                logger.warning(f"Binance ошибка: {e}")
-                yf_sym = f"{base}-USD"
-                try:
-                    return fetch_yfinance(yf_sym, timeframe, limit)
-                except:
-                    pass
-        raise Exception("Нет данных для криптовалюты")
-
-    if clean in SYMBOL_CONFIG:
-        cfg = SYMBOL_CONFIG[clean]
-        primary = cfg.get('primary', 'twelvedata')
-        if primary == 'twelvedata' and TWELVE_DATA_API_KEY:
-            try:
-                td_sym = cfg['twelvedata']
-                return fetch_twelvedata(td_sym, timeframe, limit)
-            except Exception as e:
-                logger.warning(f"Twelve Data primary ошибка: {e}")
-        if primary == 'yfinance':
-            yf_sym = cfg['yfinance']
-            try:
-                return fetch_yfinance(yf_sym, timeframe, limit, is_index=True)
-            except Exception as e:
-                logger.warning(f"Yahoo primary ошибка: {e}")
-        if primary == 'twelvedata' and cfg.get('yfinance'):
-            try:
-                yf_sym = cfg['yfinance']
-                return fetch_yfinance(yf_sym, timeframe, limit, is_index=True)
-            except Exception as e:
-                logger.warning(f"Yahoo резерв ошибка: {e}")
-        if ALPHA_VANTAGE_API_KEY:
-            try:
-                av_sym = cfg.get('twelvedata', clean)
-                return fetch_alphavantage(av_sym, timeframe, limit)
-            except Exception as e:
-                logger.warning(f"Alpha Vantage ошибка: {e}")
-        raise Exception("Нет данных для индекса/сырья")
-
-    # Акции
+async def fetch_market_data_async(symbol, timeframe, limit=300):
+    """Пытается получить данные параллельно из нескольких источников."""
+    tasks = []
     if TWELVE_DATA_API_KEY:
+        tasks.append(asyncio.to_thread(fetch_twelvedata, symbol, timeframe, limit))
+    tasks.append(asyncio.to_thread(fetch_yfinance, symbol, timeframe, limit))
+    tasks.append(asyncio.to_thread(fetch_binance, symbol, timeframe, limit))
+    
+    for task in asyncio.as_completed(tasks):
         try:
-            return fetch_twelvedata(clean, timeframe, limit)
+            df = await task
+            if df is not None and not df.empty:
+                return df
         except Exception as e:
-            logger.warning(f"Twelve Data ошибка акции: {e}")
-    yf_symbols = [clean] + STOCK_ALTERNATIVES.get(clean, [])
-    for sym in yf_symbols:
-        try:
-            return fetch_yfinance(sym, timeframe, limit)
-        except Exception as e:
-            logger.warning(f"Yahoo ошибка {sym}: {e}")
+            logger.debug(f"Ошибка в одном из источников: {e}")
+            continue
+    raise Exception("Не удалось получить данные ни из одного источника")
 
-    # Валюты
-    if clean in FOREX_LIST:
-        if TWELVE_DATA_API_KEY:
-            try:
-                td_sym = f"{clean[:3]}/{clean[3:]}" if len(clean)==6 else clean
-                return fetch_twelvedata(td_sym, timeframe, limit)
-            except Exception as e:
-                logger.warning(f"Twelve Data валюты ошибка: {e}")
-        yf_sym = f"{clean}=X"
-        try:
-            return fetch_yfinance(yf_sym, timeframe, limit)
-        except Exception as e:
-            logger.warning(f"Yahoo валюты ошибка: {e}")
-
-    raise Exception("Нет данных")
+def get_market_data(symbol, timeframe, limit=300):
+    """Синхронная обёртка для асинхронной функции."""
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(fetch_market_data_async(symbol, timeframe, limit))
+        loop.close()
+        return result
+    except Exception as e:
+        logger.error(f"Ошибка получения данных: {e}")
+        raise
 
 def fetch_yfinance(symbol, timeframe, limit, is_index=False):
     interval = YFINANCE_INTERVAL_MAP.get(timeframe, timeframe)
@@ -289,7 +305,7 @@ def fetch_alphavantage(symbol, timeframe, limit):
     df = df.iloc[-limit:]
     return df
 
-# ==================== РАСШИРЕННЫЕ ИНДИКАТОРЫ ====================
+# ==================== РАСШИРЕННЫЙ РАСЧЁТ ИНДИКАТОРОВ ====================
 def compute_advanced_indicators(df):
     close = df['close']
     high = df['high']
@@ -342,6 +358,12 @@ def compute_advanced_indicators(df):
     stoch_rsi_d = stoch_rsi.stochrsi_d().iloc[-1] if not pd.isna(stoch_rsi.stochrsi_d().iloc[-1]) else 50
     stoch_rsi_signal = 1 if stoch_rsi_k < 20 and stoch_rsi_d < 20 else -1 if stoch_rsi_k > 80 and stoch_rsi_d > 80 else 0
 
+    # ---------- НОВЫЕ УЛУЧШЕНИЯ ----------
+    patterns = detect_candle_patterns(df)
+    pivots = calculate_pivot_points(df)
+    volume_score = volume_analysis(df)
+    session = get_session(datetime.utcnow())
+
     return {
         'rsi': rsi, 'macd_diff': macd_diff, 'macd_line': macd_line,
         'macd_signal': macd_signal, 'ema9': ema9, 'ema21': ema21,
@@ -350,63 +372,170 @@ def compute_advanced_indicators(df):
         'ichimoku': ichimoku, 'supertrend': supertrend,
         'vwap': vwap_signal, 'hma': hma_signal,
         'stoch_rsi': stoch_rsi_signal,
-        'last_close': close.iloc[-1], 'atr': atr
+        'last_close': close.iloc[-1], 'atr': atr,
+        'patterns': patterns,
+        'pivots': pivots,
+        'volume_score': volume_score,
+        'session': session
     }
 
 def get_weighted_signal(indicators):
     weights = {'rsi':2,'macd':3,'ema':2,'bollinger':1,'stoch':1,
-               'adx':2,'ichimoku':2,'supertrend':2,'vwap':1,'hma':1,'stoch_rsi':1}
+               'adx':2,'ichimoku':2,'supertrend':2,'vwap':1,'hma':1,
+               'stoch_rsi':1, 'engulfing':2, 'hammer':1, 'volume':1,
+               'pivot':1}
     votes_long, votes_short = 0, 0
-    if indicators['rsi'] < 30: votes_long += weights['rsi']
-    elif indicators['rsi'] > 70: votes_short += weights['rsi']
+    reasons = []
+
+    # ---- Базовые индикаторы ----
+    if indicators['rsi'] < 30:
+        votes_long += weights['rsi']
+        reasons.append(f"RSI={indicators['rsi']:.1f} (перепроданность)")
+    elif indicators['rsi'] > 70:
+        votes_short += weights['rsi']
+        reasons.append(f"RSI={indicators['rsi']:.1f} (перекупленность)")
+
     if indicators['macd_diff'] > 0 and indicators['macd_line'] > indicators['macd_signal']:
         votes_long += weights['macd']
+        reasons.append("MACD бычье")
     elif indicators['macd_diff'] < 0 and indicators['macd_line'] < indicators['macd_signal']:
         votes_short += weights['macd']
+        reasons.append("MACD медвежье")
+
     if indicators['ema9'] > indicators['ema21']:
         votes_long += weights['ema']
+        reasons.append(f"EMA9 > EMA21")
     else:
         votes_short += weights['ema']
+        reasons.append(f"EMA9 < EMA21")
+
     last = indicators['last_close']
     if last <= indicators['bb_low']:
         votes_long += weights['bollinger']
+        reasons.append("Цена у нижней полосы")
     elif last >= indicators['bb_high']:
         votes_short += weights['bollinger']
+        reasons.append("Цена у верхней полосы")
+
     if indicators['stoch_k'] < 20 and indicators['stoch_d'] < 20:
         votes_long += weights['stoch']
+        reasons.append("Stoch перепродан")
     elif indicators['stoch_k'] > 80 and indicators['stoch_d'] > 80:
         votes_short += weights['stoch']
+        reasons.append("Stoch перекуплен")
+
     if indicators['adx'] > 25:
         if indicators['ema9'] > indicators['ema21']:
             votes_long += weights['adx']
+            reasons.append(f"ADX={indicators['adx']:.1f} (тренд вверх)")
         else:
             votes_short += weights['adx']
+            reasons.append(f"ADX={indicators['adx']:.1f} (тренд вниз)")
+
     if indicators['ichimoku'] > 0:
         votes_long += weights['ichimoku']
+        reasons.append("Ichimoku бычий")
     elif indicators['ichimoku'] < 0:
         votes_short += weights['ichimoku']
+        reasons.append("Ichimoku медвежий")
+
     if indicators['supertrend'] > 0:
         votes_long += weights['supertrend']
+        reasons.append("SuperTrend бычий")
     elif indicators['supertrend'] < 0:
         votes_short += weights['supertrend']
+        reasons.append("SuperTrend медвежий")
+
     if indicators['vwap'] > 0:
         votes_long += weights['vwap']
+        reasons.append("Цена выше VWAP")
     elif indicators['vwap'] < 0:
         votes_short += weights['vwap']
+        reasons.append("Цена ниже VWAP")
+
     if indicators['hma'] > 0:
         votes_long += weights['hma']
+        reasons.append("HMA бычий")
     elif indicators['hma'] < 0:
         votes_short += weights['hma']
+        reasons.append("HMA медвежий")
+
     if indicators['stoch_rsi'] > 0:
         votes_long += weights['stoch_rsi']
+        reasons.append("Stoch RSI бычий")
     elif indicators['stoch_rsi'] < 0:
         votes_short += weights['stoch_rsi']
+        reasons.append("Stoch RSI медвежий")
+
+    # ---------- НОВЫЕ ГОЛОСА ----------
+    patterns = indicators['patterns']
+    if patterns['engulfing'] == 1:
+        votes_long += weights['engulfing']
+        reasons.append("Бычье поглощение")
+    elif patterns['engulfing'] == -1:
+        votes_short += weights['engulfing']
+        reasons.append("Медвежье поглощение")
+    if patterns['hammer'] == 1:
+        votes_long += weights['hammer']
+        reasons.append("Молот (бычий)")
+    elif patterns['hammer'] == -1:
+        votes_short += weights['hammer']
+        reasons.append("Молот (медвежий)")
+    if patterns['doji'] == 1:
+        votes_long += 0.5
+        votes_short += 0.5
+        reasons.append("Доджи (разворот)")
+
+    pivots = indicators['pivots']
+    if pivots:
+        if last <= pivots['s1']:
+            votes_long += weights['pivot']
+            reasons.append(f"Цена у поддержки S1 ({pivots['s1']:.4f})")
+        elif last >= pivots['r1']:
+            votes_short += weights['pivot']
+            reasons.append(f"Цена у сопротивления R1 ({pivots['r1']:.4f})")
+        if last <= pivots['s2']:
+            votes_long += weights['pivot']
+            reasons.append(f"Цена у сильной поддержки S2 ({pivots['s2']:.4f})")
+        elif last >= pivots['r2']:
+            votes_short += weights['pivot']
+            reasons.append(f"Цена у сильного сопротивления R2 ({pivots['r2']:.4f})")
+
+    volume_score = indicators['volume_score']
+    if volume_score == 1:
+        if votes_long > votes_short:
+            votes_long += weights['volume']
+            reasons.append("Объём подтверждает тренд")
+        else:
+            votes_short += weights['volume']
+            reasons.append("Объём подтверждает тренд")
+    elif volume_score == -1:
+        if votes_long > votes_short:
+            votes_short += weights['volume']
+            reasons.append("Низкий объём – возможен разворот")
+        else:
+            votes_long += weights['volume']
+            reasons.append("Низкий объём – возможен разворот")
+
+    session = indicators['session']
+    if session == "ASIA":
+        reasons.append("Азиатская сессия (сниженная волатильность)")
+    elif session == "LONDON":
+        reasons.append("Лондонская сессия (высокая волатильность)")
+    elif session == "NEW_YORK":
+        reasons.append("Нью-Йоркская сессия (высокая волатильность)")
+
     if votes_long > votes_short and votes_long >= 5:
-        return 'LONG'
+        signal = 'LONG'
+        final_reason = f"Бычий перевес ({votes_long:.1f} vs {votes_short:.1f}). " + ", ".join(reasons)
     elif votes_short > votes_long and votes_short >= 5:
-        return 'SHORT'
+        signal = 'SHORT'
+        final_reason = f"Медвежий перевес ({votes_short:.1f} vs {votes_long:.1f}). " + ", ".join(reasons)
     else:
-        return 'HOLD'
+        signal = 'HOLD'
+        final_reason = f"Нет явного перевеса ({votes_long:.1f}L, {votes_short:.1f}S). " + ", ".join(reasons)
+
+    return signal, final_reason
 
 def get_multi_timeframe_alignment(asset, primary_tf):
     tf_list = ['1h', '4h']
@@ -418,7 +547,8 @@ def get_multi_timeframe_alignment(asset, primary_tf):
             df = get_market_data(asset, tf, limit=200)
             if df is not None and not df.empty:
                 ind = compute_advanced_indicators(df)
-                signals.append(get_weighted_signal(ind))
+                sig, _ = get_weighted_signal(ind)
+                signals.append(sig)
             else:
                 signals.append('HOLD')
         except:
@@ -447,7 +577,7 @@ def generate_signal(asset, duration):
         return {'signal': 'HOLD', 'strength': 'WEAK', 'emoji': '⚪', 'reason': 'Нет данных', 'indicators': None, 'risk': None, 'timeframe': timeframe}
 
     ind = compute_advanced_indicators(df)
-    primary_signal = get_weighted_signal(ind)
+    primary_signal, reason = get_weighted_signal(ind)
 
     long_tf, short_tf = get_multi_timeframe_alignment(clean_asset, timeframe)
     tf_boost = 0
@@ -491,17 +621,17 @@ def generate_signal(asset, duration):
             emoji = '⚪'
 
     risk = calculate_risk_parameters(df, ind['last_close'])
-    reason = f"Таймфрейм: {timeframe} (авто), свечей: {len(df)}\nМульти-ТФ: {long_tf} LONG, {short_tf} SHORT на 1H/4H"
+    full_reason = f"{reason}\nТаймфрейм: {timeframe} (авто), свечей: {len(df)}\nМульти-ТФ: {long_tf} LONG, {short_tf} SHORT на 1H/4H"
     if tf_boost == 1:
-        reason += " → усиление сигнала"
+        full_reason += " → усиление сигнала"
     elif tf_boost == -1:
-        reason += " → противоречие, сигнал ослаблен"
+        full_reason += " → противоречие, сигнал ослаблен"
 
     return {
         'signal': final_signal,
         'strength': strength,
         'emoji': emoji,
-        'reason': reason,
+        'reason': full_reason,
         'indicators': ind,
         'risk': risk,
         'timeframe': timeframe
@@ -812,11 +942,8 @@ async def back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Update {update} caused error {context.error}")
 
-# ==================== ЗАПУСК (С КОРРЕКТНЫМ ЦИКЛОМ И KEEP-ALIVE) ====================
-RENDER_URL = "https://mega-trade-bot.onrender.com"  # ЗАМЕНИ НА СВОЙ URL
-
+# ==================== ЗАПУСК ====================
 def run_bot():
-    """Запускает бота с автоматическим перезапуском при падении."""
     while True:
         try:
             app = Application.builder().token(BOT_TOKEN).build()
@@ -829,10 +956,9 @@ def run_bot():
             app.add_handler(CallbackQueryHandler(back_handler, pattern="^(back_to_section|back_to_asset|go|home)$"))
             app.add_error_handler(error_handler)
 
-            # run_polling сам удалит вебхук и создаст правильный цикл событий
             logger.info("Бот запущен!")
             app.run_polling(allowed_updates=Update.ALL_TYPES)
-            break  # если нормально завершился, выходим из цикла
+            break
         except Conflict as e:
             logger.warning(f"Conflict: {e}. Перезапуск через 10 секунд...")
             time.sleep(10)
@@ -851,11 +977,9 @@ def main():
     def run_flask():
         flask_app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
 
-    # Запускаем Flask в фоне
     threading.Thread(target=run_flask, daemon=True).start()
     logger.info("Flask запущен")
 
-    # Keep-alive: каждую минуту пингуем внешний URL, чтобы Render не уснул
     def keep_alive():
         while True:
             try:
@@ -866,8 +990,6 @@ def main():
             time.sleep(60)
 
     threading.Thread(target=keep_alive, daemon=True).start()
-
-    # Запускаем бота
     run_bot()
 
 if __name__ == "__main__":
