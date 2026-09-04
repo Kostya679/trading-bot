@@ -73,7 +73,6 @@ BINANCE_INTERVAL_MAP = {
 COMMODITY_SYMBOLS = ['Gold', 'Silver', 'Oil', 'Natural Gas']
 INDEX_SYMBOLS = ['S&P 500', 'NASDAQ', 'Dow Jones', 'Nikkei 225']
 
-# === СПИСОК ВАЛЮТНЫХ ПАР (для автоматического поднятия таймфрейма) ===
 FOREX_LIST = [
     'AUDUSD', 'EURUSD', 'EURGBP', 'EURJPY', 'GBPJPY', 'USDCAD', 'USDCHF',
     'USDJPY', 'GBPUSD', 'NZDUSD', 'EURCHF', 'GBPAUD', 'AUDJPY', 'CADJPY',
@@ -95,14 +94,12 @@ def get_timeframe_from_duration(duration, asset_name):
     is_index = any(idx in asset_name for idx in INDEX_SYMBOLS)
     is_forex = asset_name in FOREX_LIST
 
-    # Для индексов, сырья и валют – минимальный 15m
     if is_index or is_commodity or is_forex:
         if seconds <= 900:
             return '15m'
         else:
             return '1h'
 
-    # Для остальных (крипто, акции)
     if seconds <= 60:
         return '1m'
     elif seconds <= 300:
@@ -134,7 +131,7 @@ STOCK_ALTERNATIVES = {
 }
 CRYPTO_LIST = ['BTC', 'ETH', 'LTC', 'XRP', 'SOL', 'ADA', 'DOT', 'LINK', 'BNB']
 
-# ==================== ФУНКЦИИ ПАТТЕРНОВ И УЛУЧШЕНИЙ ====================
+# ==================== ФУНКЦИИ ПАТТЕРНОВ ====================
 def detect_candle_patterns(df):
     if len(df) < 2:
         return {'engulfing': 0, 'hammer': 0, 'doji': 0}
@@ -362,6 +359,10 @@ def get_market_data(symbol, timeframe, limit=300):
         raise
 
 def fetch_yfinance(symbol, timeframe, limit, is_index=False):
+    # Не добавляем =X для индексов, фьючерсов и спецсимволов
+    if not symbol.startswith('^') and not symbol.endswith('=F') and not symbol.endswith('=X'):
+        if not is_index:
+            symbol = symbol + '=X'
     interval = YFINANCE_INTERVAL_MAP.get(timeframe, timeframe)
     if timeframe == '4h':
         interval = '1h'
@@ -995,9 +996,8 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"duration_selected error: {e}")
         keyboard = [[InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]]
-        # Улучшенное сообщение об ошибке для валютных пар
         error_msg = f"❌ Ошибка: {str(e)}"
-        if "Нет данных" in str(e):
+        if "Нет данных" in str(e) or "No data" in str(e):
             error_msg = f"❌ Для {asset} на таймфрейме {timeframe} нет данных. Попробуйте выбрать больший таймфрейм (например, 15m или 1h)."
         await update.effective_chat.send_message(
             error_msg,
