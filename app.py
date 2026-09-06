@@ -1173,11 +1173,11 @@ def home():
     return "Bot is running!"
 
 @app.route('/telegram', methods=['POST'])
-async def telegram_webhook():
+def telegram_webhook():
     if application is None:
         return 'Application not initialized', 500
     update = Update.de_json(request.get_json(force=True), application.bot)
-    await application.process_update(update)
+    asyncio.run(application.process_update(update))
     return 'ok'
 
 async def setup_webhook():
