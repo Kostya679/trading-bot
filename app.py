@@ -2,7 +2,7 @@ import os
 import logging
 import time
 import asyncio
-from datetime import datetime, time as datetime_time
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
@@ -11,9 +11,8 @@ import pandas as pd
 import numpy as np
 import ta
 import requests
-from flask import Flask
-import threading
-from telegram.error import BadRequest, Conflict
+from flask import Flask, request
+import json
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -26,7 +25,7 @@ if not BOT_TOKEN:
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-RENDER_URL = "https://mega-trade-bot.onrender.com"  # ЗАМЕНИ НА СВОЙ URL
+RENDER_URL = "https://mega-trade-bot.onrender.com"  # Замени на свой URL
 CANDLE_LIMITS = {'1m': 1000, '5m': 800, '15m': 600, '1h': 400, '4h': 300}
 
 # ==================== БАННЕРЫ И ИКОНКИ ====================
@@ -131,6 +130,24 @@ STOCK_ALTERNATIVES = {
 }
 CRYPTO_LIST = ['BTC', 'ETH', 'LTC', 'XRP', 'SOL', 'ADA', 'DOT', 'LINK', 'BNB']
 
+def get_yfinance_symbol(symbol):
+    """Преобразует отображаемое имя актива в тикер Yahoo Finance."""
+    # Проверяем специальные конфигурации
+    for key, config in SYMBOL_CONFIG.items():
+        if key.replace(" ", "").upper() == symbol.upper():
+            return config['yfinance']
+    # Криптовалюты не используем в Yahoo
+    if symbol.upper() in [c + 'USD' for c in CRYPTO_LIST]:
+        return None
+    # Валютные пары
+    if symbol.upper() in FOREX_LIST:
+        return symbol.upper() + '=X'
+    # Акции
+    if symbol.upper() in STOCK_ALTERNATIVES:
+        return symbol.upper()
+    # Если ничего не подошло, возвращаем как есть (надеемся, что это валидный тикер)
+    return symbol
+
 # ==================== ФУНКЦИИ ПАТТЕРНОВ ====================
 def detect_candle_patterns(df):
     if len(df) < 2:
@@ -208,16 +225,17 @@ def detect_double_bottom(df, lookback=30, tolerance=0.02):
         return 0
     recent = df.iloc[-lookback:]
     lows = recent['low']
-    min1 = lows.idxmin()
-    if min1 + 5 >= len(lows):
+    min1_pos = lows.values.argmin()
+    if min1_pos + 5 >= len(lows):
         return 0
-    min2 = lows[min1+5:].idxmin() if min1+5 < len(lows) else None
-    if min2 is None:
+    second_part = lows.iloc[min1_pos+5:]
+    if len(second_part) == 0:
         return 0
-    if abs(df.loc[min1, 'low'] - df.loc[min2, 'low']) / df.loc[min1, 'low'] > tolerance:
+    min2_pos = second_part.values.argmin() + (min1_pos+5)
+    if abs(lows.iloc[min1_pos] - lows.iloc[min2_pos]) / lows.iloc[min1_pos] > tolerance:
         return 0
-    max_between = df.loc[min1:min2, 'high'].max()
-    if max_between < max(df.loc[min1, 'high'], df.loc[min2, 'high']) * 1.02:
+    max_between = recent['high'].iloc[min1_pos:min2_pos+1].max()
+    if max_between < max(lows.iloc[min1_pos], lows.iloc[min2_pos]) * 1.02:
         return 0
     neck = max_between
     if df['close'].iloc[-1] > neck:
@@ -232,16 +250,17 @@ def detect_double_top(df, lookback=30, tolerance=0.02):
         return 0
     recent = df.iloc[-lookback:]
     highs = recent['high']
-    max1 = highs.idxmax()
-    if max1 + 5 >= len(highs):
+    max1_pos = highs.values.argmax()
+    if max1_pos + 5 >= len(highs):
         return 0
-    max2 = highs[max1+5:].idxmax() if max1+5 < len(highs) else None
-    if max2 is None:
+    second_part = highs.iloc[max1_pos+5:]
+    if len(second_part) == 0:
         return 0
-    if abs(df.loc[max1, 'high'] - df.loc[max2, 'high']) / df.loc[max1, 'high'] > tolerance:
+    max2_pos = second_part.values.argmax() + (max1_pos+5)
+    if abs(highs.iloc[max1_pos] - highs.iloc[max2_pos]) / highs.iloc[max1_pos] > tolerance:
         return 0
-    min_between = df.loc[max1:max2, 'low'].min()
-    if min_between > min(df.loc[max1, 'low'], df.loc[max2, 'low']) * 0.98:
+    min_between = recent['low'].iloc[max1_pos:max2_pos+1].min()
+    if min_between > min(highs.iloc[max1_pos], highs.iloc[max2_pos]) * 0.98:
         return 0
     neck = min_between
     if df['close'].iloc[-1] < neck:
@@ -266,8 +285,8 @@ def detect_head_shoulders(df, lookback=40):
     if p2[1] > p1[1] and p2[1] > p3[1]:
         if abs(p1[1] - p3[1]) / p1[1] > 0.03:
             return 0
-        neck1 = df.iloc[p1[0]:p2[0]]['low'].min()
-        neck2 = df.iloc[p2[0]:p3[0]]['low'].min()
+        neck1 = recent['low'].iloc[p1[0]:p2[0]].min()
+        neck2 = recent['low'].iloc[p2[0]:p3[0]].min()
         neck = (neck1 + neck2) / 2
         if df['close'].iloc[-1] < neck:
             avg_vol = df['volume'].iloc[-20:].mean()
@@ -285,8 +304,8 @@ def detect_head_shoulders(df, lookback=40):
     if v2[1] < v1[1] and v2[1] < v3[1]:
         if abs(v1[1] - v3[1]) / v1[1] > 0.03:
             return 0
-        neck1 = df.iloc[v1[0]:v2[0]]['high'].max()
-        neck2 = df.iloc[v2[0]:v3[0]]['high'].max()
+        neck1 = recent['high'].iloc[v1[0]:v2[0]].max()
+        neck2 = recent['high'].iloc[v2[0]:v3[0]].max()
         neck = (neck1 + neck2) / 2
         if df['close'].iloc[-1] > neck:
             avg_vol = df['volume'].iloc[-20:].mean()
@@ -333,10 +352,23 @@ def get_session(time_utc):
 # ==================== ФУНКЦИИ ПОЛУЧЕНИЯ ДАННЫХ ====================
 async def fetch_market_data_async(symbol, timeframe, limit=300):
     tasks = []
+    # TwelveData
     if TWELVE_DATA_API_KEY:
-        tasks.append(asyncio.to_thread(fetch_twelvedata, symbol, timeframe, limit))
-    tasks.append(asyncio.to_thread(fetch_yfinance, symbol, timeframe, limit))
-    tasks.append(asyncio.to_thread(fetch_binance, symbol, timeframe, limit))
+        td_symbol = symbol
+        # Для TwelveData можно использовать конфиг, если есть
+        for key, config in SYMBOL_CONFIG.items():
+            if key.replace(" ", "").upper() == symbol.upper():
+                td_symbol = config['twelvedata']
+                break
+        tasks.append(asyncio.to_thread(fetch_twelvedata, td_symbol, timeframe, limit))
+    # Yahoo
+    yf_symbol = get_yfinance_symbol(symbol)
+    if yf_symbol:
+        tasks.append(asyncio.to_thread(fetch_yfinance, yf_symbol, timeframe, limit))
+    # Binance (только крипта)
+    if symbol.upper() in [c + 'USD' for c in CRYPTO_LIST]:
+        tasks.append(asyncio.to_thread(fetch_binance, symbol, timeframe, limit))
+
     for task in asyncio.as_completed(tasks):
         try:
             df = await task
@@ -358,23 +390,28 @@ def get_market_data(symbol, timeframe, limit=300):
         logger.error(f"Ошибка получения данных: {e}")
         raise
 
-def fetch_yfinance(symbol, timeframe, limit, is_index=False):
-    # Не добавляем =X для индексов, фьючерсов и спецсимволов
-    if not symbol.startswith('^') and not symbol.endswith('=F') and not symbol.endswith('=X'):
-        if not is_index:
-            symbol = symbol + '=X'
+def fetch_yfinance(symbol, timeframe, limit, retries=3):
     interval = YFINANCE_INTERVAL_MAP.get(timeframe, timeframe)
     if timeframe == '4h':
         interval = '1h'
-    time.sleep(3)
-    ticker = yf.Ticker(symbol)
-    df = ticker.history(period='30d', interval=interval)
-    if df.empty:
-        raise Exception("Нет данных Yahoo")
-    if timeframe == '4h':
-        df = df.resample('4h').agg({'Open':'first','High':'max','Low':'min','Close':'last','Volume':'sum'}).dropna()
-    df = df.iloc[-limit:]
-    return df[['Open','High','Low','Close','Volume']].rename(columns={'Open':'open','High':'high','Low':'low','Close':'close','Volume':'volume'})
+    for attempt in range(retries):
+        try:
+            time.sleep(5)
+            ticker = yf.Ticker(symbol)
+            df = ticker.history(period='30d', interval=interval)
+            if df.empty:
+                raise Exception("Нет данных Yahoo")
+            if timeframe == '4h':
+                df = df.resample('4h').agg({'Open':'first','High':'max','Low':'min','Close':'last','Volume':'sum'}).dropna()
+            df = df.iloc[-limit:]
+            return df[['Open','High','Low','Close','Volume']].rename(columns={'Open':'open','High':'high','Low':'low','Close':'close','Volume':'volume'})
+        except Exception as e:
+            if '401' in str(e) or '429' in str(e):
+                time.sleep(10 * (attempt+1))
+                continue
+            else:
+                raise
+    raise Exception("Yahoo недоступен после ретраев")
 
 def fetch_binance(symbol, timeframe, limit):
     from binance.client import Client
@@ -382,6 +419,9 @@ def fetch_binance(symbol, timeframe, limit):
     interval = BINANCE_INTERVAL_MAP.get(timeframe, '1m')
     if timeframe == '4h':
         interval = '4h'
+    # Для Binance нужно убрать USD, если это крипта
+    if symbol.endswith('USD'):
+        symbol = symbol[:-3]
     klines = client.get_klines(symbol=symbol.upper(), interval=interval, limit=limit)
     if not klines:
         raise Exception("Нет данных Binance")
@@ -497,7 +537,7 @@ def compute_advanced_indicators(df):
 
     pivots = calculate_pivot_points(df)
     volume_score = volume_analysis(df)
-    session = get_session(datetime.utcnow())
+    session = get_session(datetime.now(timezone.utc))
 
     return {
         'rsi': rsi, 'macd_diff': macd_diff, 'macd_line': macd_line,
@@ -998,7 +1038,7 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]]
         error_msg = f"❌ Ошибка: {str(e)}"
         if "Нет данных" in str(e) or "No data" in str(e):
-            error_msg = f"❌ Для {asset} на таймфрейме {timeframe} нет данных. Попробуйте выбрать больший таймфрейм (например, 15m или 1h)."
+            error_msg = f"❌ Для {asset} нет данных. Попробуйте выбрать больший таймфрейм (например, 15m или 1h)."
         await update.effective_chat.send_message(
             error_msg,
             reply_markup=InlineKeyboardMarkup(keyboard)
@@ -1124,55 +1164,42 @@ async def back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Update {update} caused error {context.error}")
 
-# ==================== ЗАПУСК ====================
-def run_bot():
-    while True:
-        try:
-            app = Application.builder().token(BOT_TOKEN).build()
-            app.add_handler(CommandHandler("start", start))
-            app.add_handler(CallbackQueryHandler(go, pattern="^go$"))
-            app.add_handler(CallbackQueryHandler(section_handler, pattern="^(currencies|crypto|commodities|stocks|indices)$"))
-            app.add_handler(CallbackQueryHandler(asset_selected, pattern="^(" + "|".join(CURRENCIES+CRYPTO+COMMODITIES+STOCKS+INDICES) + ")$"))
-            app.add_handler(CallbackQueryHandler(duration_selected, pattern="^(" + "|".join(DURATIONS) + ")$"))
-            app.add_handler(CallbackQueryHandler(resignal, pattern="^resignal$"))
-            app.add_handler(CallbackQueryHandler(back_handler, pattern="^(back_to_section|back_to_asset|go|home)$"))
-            app.add_error_handler(error_handler)
+# ==================== ВЕБХУК И ЗАПУСК ====================
+app = Flask(__name__)
+application = None
 
-            logger.info("Бот запущен!")
-            app.run_polling(allowed_updates=Update.ALL_TYPES)
-            break
-        except Conflict as e:
-            logger.warning(f"Conflict: {e}. Перезапуск через 10 секунд...")
-            time.sleep(10)
-            continue
-        except Exception as e:
-            logger.error(f"Бот упал с ошибкой: {e}. Перезапуск через 10 секунд...")
-            time.sleep(10)
-            continue
+@app.route('/')
+def home():
+    return "Bot is running!"
+
+@app.route('/telegram', methods=['POST'])
+async def telegram_webhook():
+    if application is None:
+        return 'Application not initialized', 500
+    update = Update.de_json(request.get_json(force=True), application.bot)
+    await application.process_update(update)
+    return 'ok'
+
+async def setup_webhook():
+    global application
+    application = Application.builder().token(BOT_TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(go, pattern="^go$"))
+    application.add_handler(CallbackQueryHandler(section_handler, pattern="^(currencies|crypto|commodities|stocks|indices)$"))
+    application.add_handler(CallbackQueryHandler(asset_selected, pattern="^(" + "|".join(CURRENCIES+CRYPTO+COMMODITIES+STOCKS+INDICES) + ")$"))
+    application.add_handler(CallbackQueryHandler(duration_selected, pattern="^(" + "|".join(DURATIONS) + ")$"))
+    application.add_handler(CallbackQueryHandler(resignal, pattern="^resignal$"))
+    application.add_handler(CallbackQueryHandler(back_handler, pattern="^(back_to_section|back_to_asset|go|home)$"))
+    application.add_error_handler(error_handler)
+
+    await application.initialize()
+    await application.bot.set_webhook(url=f"{RENDER_URL}/telegram")
+    logger.info(f"Webhook установлен: {RENDER_URL}/telegram")
 
 def main():
-    flask_app = Flask(__name__)
-    @flask_app.route('/')
-    def home():
-        return "Bot is running!"
-
-    def run_flask():
-        flask_app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
-
-    threading.Thread(target=run_flask, daemon=True).start()
-    logger.info("Flask запущен")
-
-    def keep_alive():
-        while True:
-            try:
-                requests.get(RENDER_URL, timeout=5)
-                logger.info("✅ Self-ping успешен")
-            except Exception as e:
-                logger.warning(f"❌ Self-ping ошибка: {e}")
-            time.sleep(60)
-
-    threading.Thread(target=keep_alive, daemon=True).start()
-    run_bot()
+    asyncio.run(setup_webhook())
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
 
 if __name__ == "__main__":
     main()
