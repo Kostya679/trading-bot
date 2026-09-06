@@ -12,7 +12,6 @@ import numpy as np
 import ta
 import requests
 from flask import Flask, request
-import json
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -132,20 +131,15 @@ CRYPTO_LIST = ['BTC', 'ETH', 'LTC', 'XRP', 'SOL', 'ADA', 'DOT', 'LINK', 'BNB']
 
 def get_yfinance_symbol(symbol):
     """Преобразует отображаемое имя актива в тикер Yahoo Finance."""
-    # Проверяем специальные конфигурации
     for key, config in SYMBOL_CONFIG.items():
         if key.replace(" ", "").upper() == symbol.upper():
             return config['yfinance']
-    # Криптовалюты не используем в Yahoo
     if symbol.upper() in [c + 'USD' for c in CRYPTO_LIST]:
         return None
-    # Валютные пары
     if symbol.upper() in FOREX_LIST:
         return symbol.upper() + '=X'
-    # Акции
     if symbol.upper() in STOCK_ALTERNATIVES:
         return symbol.upper()
-    # Если ничего не подошло, возвращаем как есть (надеемся, что это валидный тикер)
     return symbol
 
 # ==================== ФУНКЦИИ ПАТТЕРНОВ ====================
@@ -355,7 +349,6 @@ async def fetch_market_data_async(symbol, timeframe, limit=300):
     # TwelveData
     if TWELVE_DATA_API_KEY:
         td_symbol = symbol
-        # Для TwelveData можно использовать конфиг, если есть
         for key, config in SYMBOL_CONFIG.items():
             if key.replace(" ", "").upper() == symbol.upper():
                 td_symbol = config['twelvedata']
@@ -379,13 +372,9 @@ async def fetch_market_data_async(symbol, timeframe, limit=300):
             continue
     raise Exception("Не удалось получить данные ни из одного источника")
 
-def get_market_data(symbol, timeframe, limit=300):
+async def get_market_data_async(symbol, timeframe, limit=300):
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        result = loop.run_until_complete(fetch_market_data_async(symbol, timeframe, limit))
-        loop.close()
-        return result
+        return await fetch_market_data_async(symbol, timeframe, limit)
     except Exception as e:
         logger.error(f"Ошибка получения данных: {e}")
         raise
@@ -419,7 +408,6 @@ def fetch_binance(symbol, timeframe, limit):
     interval = BINANCE_INTERVAL_MAP.get(timeframe, '1m')
     if timeframe == '4h':
         interval = '4h'
-    # Для Binance нужно убрать USD, если это крипта
     if symbol.endswith('USD'):
         symbol = symbol[:-3]
     klines = client.get_klines(symbol=symbol.upper(), interval=interval, limit=limit)
@@ -449,25 +437,6 @@ def fetch_twelvedata(symbol, timeframe, limit):
         df[c] = df[c].astype(float)
     df = df.iloc[::-1].reset_index(drop=True)
     return df[['open','high','low','close','volume']]
-
-def fetch_alphavantage(symbol, timeframe, limit):
-    interval = {'5s':'1min','10s':'1min','15s':'1min','30s':'1min',
-                '1m':'1min','2m':'1min','3m':'5min','4m':'5min',
-                '5m':'5min','6m':'15min','8m':'15min','10m':'15min',
-                '15m':'15min','20m':'30min','25m':'30min','30m':'30min',
-                '45m':'60min','1h':'60min','2h':'60min','3h':'60min','4h':'60min'}.get(timeframe, '5min')
-    url = f"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={symbol}&interval={interval}&apikey={ALPHA_VANTAGE_API_KEY}&outputsize=full"
-    resp = requests.get(url, timeout=15)
-    data = resp.json()
-    if 'Time Series' not in data:
-        raise Exception("Нет данных Alpha Vantage")
-    df = pd.DataFrame.from_dict(data['Time Series'], orient='index')
-    df.index = pd.to_datetime(df.index)
-    df = df.sort_index()
-    df = df.rename(columns={'1. open':'open','2. high':'high','3. low':'low','4. close':'close','5. volume':'volume'})
-    df = df[['open','high','low','close','volume']].astype(float)
-    df = df.iloc[-limit:]
-    return df
 
 # ==================== ОСНОВНАЯ ЛОГИКА СИГНАЛА ====================
 def compute_advanced_indicators(df):
@@ -756,14 +725,14 @@ def get_weighted_signal(indicators, timeframe='1h'):
 
     return signal, final_reason
 
-def get_multi_timeframe_alignment(asset, primary_tf):
+async def get_multi_timeframe_alignment(asset, primary_tf):
     tf_list = ['1h', '4h']
     signals = []
     for tf in tf_list:
         if tf == primary_tf:
             continue
         try:
-            df = get_market_data(asset, tf, limit=200)
+            df = await get_market_data_async(asset, tf, limit=200)
             if df is not None and not df.empty:
                 ind = compute_advanced_indicators(df)
                 sig, _ = get_weighted_signal(ind)
@@ -785,20 +754,20 @@ def calculate_risk_parameters(df, entry_price):
     except:
         return {'stop_loss': entry_price * 0.98, 'take_profit': entry_price * 1.03, 'atr': entry_price * 0.01}
 
-def generate_signal(asset, duration):
+async def generate_signal(asset, duration):
     timeframe = get_timeframe_from_duration(duration, asset)
     limit = get_candle_limit(timeframe)
     logger.info(f"Авто-таймфрейм: {timeframe}, лимит: {limit} для {duration} (актив: {asset})")
 
     clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
-    df = get_market_data(clean_asset, timeframe, limit=limit)
+    df = await get_market_data_async(clean_asset, timeframe, limit=limit)
     if df is None or df.empty:
         return {'signal': 'HOLD', 'strength': 'WEAK', 'emoji': '⚪', 'reason': 'Нет данных', 'indicators': None, 'risk': None, 'timeframe': timeframe}
 
     ind = compute_advanced_indicators(df)
     primary_signal, reason = get_weighted_signal(ind, timeframe)
 
-    long_tf, short_tf = get_multi_timeframe_alignment(clean_asset, timeframe)
+    long_tf, short_tf = await get_multi_timeframe_alignment(clean_asset, timeframe)
     tf_boost = 0
     if primary_signal == 'LONG' and long_tf >= 2:
         tf_boost = 1
@@ -974,7 +943,7 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
         result = await asyncio.wait_for(
-            asyncio.to_thread(generate_signal, clean_asset, duration),
+            generate_signal(clean_asset, duration),
             timeout=30.0
         )
 
@@ -1073,7 +1042,7 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
         result = await asyncio.wait_for(
-            asyncio.to_thread(generate_signal, clean_asset, duration),
+            generate_signal(clean_asset, duration),
             timeout=30.0
         )
 
