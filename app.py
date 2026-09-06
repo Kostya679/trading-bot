@@ -2,6 +2,7 @@ import os
 import logging
 import time
 import asyncio
+import threading
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -24,7 +25,7 @@ if not BOT_TOKEN:
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-RENDER_URL = "https://mega-trade-bot.onrender.com"  # Замени на свой URL
+RENDER_URL = "https://mega-trade-bot.onrender.com"
 CANDLE_LIMITS = {'1m': 1000, '5m': 800, '15m': 600, '1h': 400, '4h': 300}
 
 # ==================== БАННЕРЫ И ИКОНКИ ====================
@@ -1136,6 +1137,7 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==================== ВЕБХУК И ЗАПУСК ====================
 app = Flask(__name__)
 application = None
+main_loop = None
 
 @app.route('/')
 def home():
@@ -1143,10 +1145,11 @@ def home():
 
 @app.route('/telegram', methods=['POST'])
 def telegram_webhook():
-    if application is None:
+    if application is None or main_loop is None:
         return 'Application not initialized', 500
     update = Update.de_json(request.get_json(force=True), application.bot)
-    asyncio.run(application.process_update(update))
+    future = asyncio.run_coroutine_threadsafe(application.process_update(update), main_loop)
+    future.result()
     return 'ok'
 
 async def setup_webhook():
@@ -1165,10 +1168,21 @@ async def setup_webhook():
     await application.bot.set_webhook(url=f"{RENDER_URL}/telegram")
     logger.info(f"Webhook установлен: {RENDER_URL}/telegram")
 
-def main():
-    asyncio.run(setup_webhook())
+def run_flask(loop):
     port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port, use_reloader=False)
+
+def main():
+    global main_loop
+    main_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(main_loop)
+    main_loop.run_until_complete(setup_webhook())
+
+    flask_thread = threading.Thread(target=run_flask, args=(main_loop,))
+    flask_thread.daemon = True
+    flask_thread.start()
+
+    flask_thread.join()
 
 if __name__ == "__main__":
     main()
