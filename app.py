@@ -132,15 +132,18 @@ CRYPTO_LIST = ['BTC', 'ETH', 'LTC', 'XRP', 'SOL', 'ADA', 'DOT', 'LINK', 'BNB']
 
 def get_yfinance_symbol(symbol):
     """Преобразует отображаемое имя актива в тикер Yahoo Finance."""
+    # Нормализуем: убираем пробелы и приводим к верхнему регистру
+    norm = symbol.replace(" ", "").upper()
     for key, config in SYMBOL_CONFIG.items():
-        if key.replace(" ", "").upper() == symbol.upper():
+        if key.replace(" ", "").upper() == norm:
             return config['yfinance']
-    if symbol.upper() in [c + 'USD' for c in CRYPTO_LIST]:
+    if norm in [c + 'USD' for c in CRYPTO_LIST]:
         return None
-    if symbol.upper() in FOREX_LIST:
-        return symbol.upper() + '=X'
-    if symbol.upper() in STOCK_ALTERNATIVES:
-        return symbol.upper()
+    if norm in FOREX_LIST:
+        return norm + '=X'
+    if norm in STOCK_ALTERNATIVES:
+        return norm
+    # Если не нашли, возвращаем исходный символ
     return symbol
 
 # ==================== ФУНКЦИИ ПАТТЕРНОВ ====================
