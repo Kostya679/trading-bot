@@ -1168,21 +1168,21 @@ async def setup_webhook():
     await application.bot.set_webhook(url=f"{RENDER_URL}/telegram")
     logger.info(f"Webhook установлен: {RENDER_URL}/telegram")
 
-def run_flask(loop):
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port, use_reloader=False)
+def start_loop(loop):
+    asyncio.set_event_loop(loop)
+    loop.run_forever()
 
 def main():
     global main_loop
     main_loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(main_loop)
-    main_loop.run_until_complete(setup_webhook())
-
-    flask_thread = threading.Thread(target=run_flask, args=(main_loop,))
-    flask_thread.daemon = True
-    flask_thread.start()
-
-    flask_thread.join()
+    # Запускаем цикл событий в фоновом потоке
+    loop_thread = threading.Thread(target=start_loop, args=(main_loop,), daemon=True)
+    loop_thread.start()
+    # Инициализируем бота и устанавливаем вебхук внутри этого цикла
+    asyncio.run_coroutine_threadsafe(setup_webhook(), main_loop).result()
+    # Запускаем Flask в главном потоке
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port, use_reloader=False)
 
 if __name__ == "__main__":
     main()
