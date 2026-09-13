@@ -73,7 +73,7 @@ COMMODITY_SYMBOLS = ['Gold', 'Silver', 'Oil', 'Natural Gas']
 INDEX_SYMBOLS = ['S&P 500', 'NASDAQ', 'Dow Jones', 'Nikkei 225']
 
 FOREX_LIST = [
-    'AUDUSD', 'EURUSD', 'EURGBP', 'EURJPY', 'GBPJPY', 'USDCAD', 'USDCHF',
+    'AUDUSD', 'EURUSD', 'EURRUB', 'EURGBP', 'EURJPY', 'GBPJPY', 'USDCAD', 'USDCHF',
     'USDJPY', 'GBPUSD', 'NZDUSD', 'EURCHF', 'GBPAUD', 'AUDJPY', 'CADJPY',
     'CHFJPY', 'EURNZD', 'GBPCAD', 'GBPNZD', 'NZDCAD', 'AUDCAD', 'AUDCHF',
     'GBPCHF', 'USDCNH', 'USDHKD', 'USDMXN', 'USDSEK', 'USDSGD', 'USDZAR'
@@ -132,7 +132,6 @@ CRYPTO_LIST = ['BTC', 'ETH', 'LTC', 'XRP', 'SOL', 'ADA', 'DOT', 'LINK', 'BNB']
 
 def get_yfinance_symbol(symbol):
     """Преобразует отображаемое имя актива в тикер Yahoo Finance."""
-    # Нормализуем: убираем пробелы и приводим к верхнему регистру
     norm = symbol.replace(" ", "").upper()
     for key, config in SYMBOL_CONFIG.items():
         if key.replace(" ", "").upper() == norm:
@@ -143,7 +142,6 @@ def get_yfinance_symbol(symbol):
         return norm + '=X'
     if norm in STOCK_ALTERNATIVES:
         return norm
-    # Если не нашли, возвращаем исходный символ
     return symbol
 
 # ==================== ФУНКЦИИ ПАТТЕРНОВ ====================
@@ -350,31 +348,31 @@ def get_session(time_utc):
 # ==================== ФУНКЦИИ ПОЛУЧЕНИЯ ДАННЫХ ====================
 async def fetch_market_data_async(symbol, timeframe, limit=300):
     tasks = []
-    # TwelveData
     if TWELVE_DATA_API_KEY:
         td_symbol = symbol
         for key, config in SYMBOL_CONFIG.items():
             if key.replace(" ", "").upper() == symbol.upper():
                 td_symbol = config['twelvedata']
                 break
-        tasks.append(asyncio.to_thread(fetch_twelvedata, td_symbol, timeframe, limit))
-    # Yahoo
+        tasks.append(("twelvedata", asyncio.to_thread(fetch_twelvedata, td_symbol, timeframe, limit)))
     yf_symbol = get_yfinance_symbol(symbol)
     if yf_symbol:
-        tasks.append(asyncio.to_thread(fetch_yfinance, yf_symbol, timeframe, limit))
-    # Binance (только крипта)
+        tasks.append(("yahoo", asyncio.to_thread(fetch_yfinance, yf_symbol, timeframe, limit)))
     if symbol.upper() in [c + 'USD' for c in CRYPTO_LIST]:
-        tasks.append(asyncio.to_thread(fetch_binance, symbol, timeframe, limit))
+        tasks.append(("binance", asyncio.to_thread(fetch_binance, symbol, timeframe, limit)))
 
-    for task in asyncio.as_completed(tasks):
+    errors = []
+    for name, task in tasks:
         try:
             df = await task
             if df is not None and not df.empty:
+                logger.info(f"✅ Источник {name} сработал для {symbol}")
                 return df
         except Exception as e:
-            logger.debug(f"Ошибка в одном из источников: {e}")
+            logger.warning(f"❌ Источник {name} упал для {symbol}: {e}")
+            errors.append(f"{name}: {e}")
             continue
-    raise Exception("Не удалось получить данные ни из одного источника")
+    raise Exception(f"Все источники упали: {errors}")
 
 async def get_market_data_async(symbol, timeframe, limit=300):
     try:
@@ -389,7 +387,7 @@ def fetch_yfinance(symbol, timeframe, limit, retries=3):
         interval = '1h'
     for attempt in range(retries):
         try:
-            time.sleep(5)
+            time.sleep(3)
             ticker = yf.Ticker(symbol)
             df = ticker.history(period='30d', interval=interval)
             if df.empty:
@@ -400,21 +398,28 @@ def fetch_yfinance(symbol, timeframe, limit, retries=3):
             return df[['Open','High','Low','Close','Volume']].rename(columns={'Open':'open','High':'high','Low':'low','Close':'close','Volume':'volume'})
         except Exception as e:
             if '401' in str(e) or '429' in str(e):
-                time.sleep(10 * (attempt+1))
+                time.sleep(5 * (attempt+1))
                 continue
             else:
                 raise
     raise Exception("Yahoo недоступен после ретраев")
 
 def fetch_binance(symbol, timeframe, limit):
-    from binance.client import Client
+    try:
+        from binance.client import Client
+    except ImportError:
+        raise Exception("python-binance не установлен")
     client = Client()
     interval = BINANCE_INTERVAL_MAP.get(timeframe, '1m')
     if timeframe == '4h':
         interval = '4h'
-    if symbol.endswith('USD'):
-        symbol = symbol[:-3]
-    klines = client.get_klines(symbol=symbol.upper(), interval=interval, limit=limit)
+    # Binance использует USDT вместо USD
+    if symbol.upper().endswith('USD'):
+        base = symbol.upper()[:-3]
+        symbol_binance = base + 'USDT'
+    else:
+        symbol_binance = symbol.upper()
+    klines = client.get_klines(symbol=symbol_binance, interval=interval, limit=limit)
     if not klines:
         raise Exception("Нет данных Binance")
     df = pd.DataFrame(klines, columns=['timestamp','open','high','low','close','volume','ct','qav','trades','tbbav','tbqav','ignore'])
@@ -948,7 +953,7 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
         result = await asyncio.wait_for(
             generate_signal(clean_asset, duration),
-            timeout=30.0
+            timeout=60.0
         )
 
         signal = result['signal']
@@ -1047,7 +1052,7 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
         result = await asyncio.wait_for(
             generate_signal(clean_asset, duration),
-            timeout=30.0
+            timeout=60.0
         )
 
         signal = result['signal']
@@ -1175,15 +1180,25 @@ def start_loop(loop):
     asyncio.set_event_loop(loop)
     loop.run_forever()
 
+def keep_alive():
+    while True:
+        try:
+            requests.get(RENDER_URL, timeout=5)
+            logger.info("✅ Self-ping успешен")
+        except Exception as e:
+            logger.warning(f"❌ Self-ping ошибка: {e}")
+        time.sleep(300)
+
 def main():
     global main_loop
     main_loop = asyncio.new_event_loop()
-    # Запускаем цикл событий в фоновом потоке
     loop_thread = threading.Thread(target=start_loop, args=(main_loop,), daemon=True)
     loop_thread.start()
-    # Инициализируем бота и устанавливаем вебхук внутри этого цикла
     asyncio.run_coroutine_threadsafe(setup_webhook(), main_loop).result()
-    # Запускаем Flask в главном потоке
+
+    # Self-ping, чтобы Render не засыпал
+    threading.Thread(target=keep_alive, daemon=True).start()
+
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port, use_reloader=False)
 
