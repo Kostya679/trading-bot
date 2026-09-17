@@ -183,6 +183,14 @@ def save_signal(user_id, asset, direction, timeframe, duration, entry_price, str
     if not DATABASE_URL or not PSYCOPG_OK: return
     if direction not in ('LONG', 'SHORT'): return
     try:
+        # КРИТИЧНО: конвертируем numpy-типы в нативные Python-типы
+        user_id = int(user_id)
+        asset = str(asset)
+        direction = str(direction)
+        timeframe = str(timeframe)
+        duration = str(duration)
+        entry_price = float(entry_price)
+        strength = str(strength)
         check_at = datetime.now(timezone.utc) + timedelta(seconds=duration_to_seconds(duration))
         conn = get_db()
         cur = conn.cursor()
@@ -197,6 +205,7 @@ def save_signal(user_id, asset, direction, timeframe, duration, entry_price, str
         conn.commit()
         cur.close()
         conn.close()
+        logger.info(f"💾 Сигнал сохранён: {asset} {direction} {duration} @ {entry_price}")
     except Exception as e:
         logger.error(f"save_signal error: {e}")
 
@@ -205,7 +214,7 @@ def get_user_cycle(user_id):
     try:
         conn = get_db()
         cur = conn.cursor()
-        cur.execute("SELECT * FROM user_cycles WHERE user_id = %s", (user_id,))
+        cur.execute("SELECT * FROM user_cycles WHERE user_id = %s", (int(user_id),))
         row = cur.fetchone()
         cur.close()
         conn.close()
@@ -219,7 +228,7 @@ def update_last_sent(user_id, period):
         col = {10: 'last_sent_10_at', 30: 'last_sent_30_at', 180: 'last_sent_180_at'}[period]
         conn = get_db()
         cur = conn.cursor()
-        cur.execute(f"UPDATE user_cycles SET {col} = NOW() WHERE user_id = %s", (user_id,))
+        cur.execute(f"UPDATE user_cycles SET {col} = NOW() WHERE user_id = %s", (int(user_id),))
         conn.commit()
         cur.close()
         conn.close()
@@ -235,7 +244,7 @@ def get_user_stats(user_id, days):
             COUNT(*) FILTER (WHERE result = 'WIN') AS wins,
             COUNT(*) FILTER (WHERE result = 'LOSS') AS losses
         FROM signals WHERE user_id = %s AND created_at >= NOW() - (%s * INTERVAL '1 day')
-    """, (user_id, days))
+    """, (int(user_id), int(days)))
     overall = cur.fetchone()
     cur.execute("""
         SELECT asset, COUNT(*) FILTER (WHERE result = 'WIN') AS wins,
@@ -243,7 +252,7 @@ def get_user_stats(user_id, days):
             COUNT(*) FILTER (WHERE result IS NOT NULL) AS total
         FROM signals WHERE user_id = %s AND created_at >= NOW() - (%s * INTERVAL '1 day') AND result IS NOT NULL
         GROUP BY asset ORDER BY total DESC LIMIT 5
-    """, (user_id, days))
+    """, (int(user_id), int(days)))
     by_asset = cur.fetchall()
     cur.execute("""
         SELECT timeframe, COUNT(*) FILTER (WHERE result = 'WIN') AS wins,
@@ -251,7 +260,7 @@ def get_user_stats(user_id, days):
             COUNT(*) FILTER (WHERE result IS NOT NULL) AS total
         FROM signals WHERE user_id = %s AND created_at >= NOW() - (%s * INTERVAL '1 day') AND result IS NOT NULL
         GROUP BY timeframe ORDER BY total DESC
-    """, (user_id, days))
+    """, (int(user_id), int(days)))
     by_tf = cur.fetchall()
     cur.execute("""
         SELECT strength, COUNT(*) FILTER (WHERE result = 'WIN') AS wins,
@@ -259,7 +268,7 @@ def get_user_stats(user_id, days):
             COUNT(*) FILTER (WHERE result IS NOT NULL) AS total
         FROM signals WHERE user_id = %s AND created_at >= NOW() - (%s * INTERVAL '1 day') AND result IS NOT NULL
         GROUP BY strength
-    """, (user_id, days))
+    """, (int(user_id), int(days)))
     by_strength = cur.fetchall()
     cur.execute("""
         SELECT direction, COUNT(*) FILTER (WHERE result = 'WIN') AS wins,
@@ -267,7 +276,7 @@ def get_user_stats(user_id, days):
             COUNT(*) FILTER (WHERE result IS NOT NULL) AS total
         FROM signals WHERE user_id = %s AND created_at >= NOW() - (%s * INTERVAL '1 day') AND result IS NOT NULL
         GROUP BY direction
-    """, (user_id, days))
+    """, (int(user_id), int(days)))
     by_dir = cur.fetchall()
     cur.close()
     conn.close()
@@ -492,12 +501,12 @@ async def fetch_market_data_async(symbol, timeframe, limit=300):
         for key, config in SYMBOL_CONFIG.items():
             if key.replace(" ", "").upper() == symbol.upper():
                 td_symbol = config['twelvedata']; break
-        tasks.append(("twelvedata", asyncio.to_thread(fetch_twelvedata, td_symbol, timeframe, limit)))
+        tasks.append(("twelvedata", asyncio.ensure_future(asyncio.to_thread(fetch_twelvedata, td_symbol, timeframe, limit))))
     yf_symbol = get_yfinance_symbol(symbol)
     if yf_symbol:
-        tasks.append(("yahoo", asyncio.to_thread(fetch_yfinance, yf_symbol, timeframe, limit)))
+        tasks.append(("yahoo", asyncio.ensure_future(asyncio.to_thread(fetch_yfinance, yf_symbol, timeframe, limit))))
     if symbol.upper() in [c + 'USD' for c in CRYPTO_LIST]:
-        tasks.append(("binance", asyncio.to_thread(fetch_binance, symbol, timeframe, limit)))
+        tasks.append(("binance", asyncio.ensure_future(asyncio.to_thread(fetch_binance, symbol, timeframe, limit))))
     errors = []
     for name, task in tasks:
         try:
@@ -768,12 +777,12 @@ async def generate_signal(asset, duration, user_id=None):
         elif final_signal == 'SHORT' and strength == 'MEDIUM': emoji = '🟠'
         elif final_signal == 'SHORT' and strength == 'WEAK': emoji = '🟡'
         else: emoji = '⚪'
-    risk = calculate_risk_parameters(df, ind['last_close'])
+    risk = calculate_risk_parameters(df, float(ind['last_close']))
     full_reason = f"{reason}\nТаймфрейм: {timeframe} (авто), свечей: {len(df)}\nМульти-ТФ: {long_tf} LONG, {short_tf} SHORT на 1H/4H"
     if tf_boost == 1: full_reason += " → усиление"
     elif tf_boost == -1: full_reason += " → противоречие, ослаблен"
     if user_id and final_signal in ('LONG', 'SHORT'):
-        save_signal(user_id, clean_asset, final_signal, timeframe, duration, ind['last_close'], strength)
+        save_signal(user_id, clean_asset, final_signal, timeframe, duration, float(ind['last_close']), strength)
     return {
         'signal': final_signal, 'strength': strength, 'emoji': emoji,
         'reason': full_reason, 'indicators': ind, 'risk': risk, 'timeframe': timeframe
@@ -792,7 +801,7 @@ async def check_pending_signals():
                 conn.close()
                 for row in pending:
                     try:
-                        asset = row['asset'].replace(" OTC", "").replace("/", "").strip()
+                        asset = str(row['asset']).replace(" OTC", "").replace("/", "").strip()
                         df = await get_market_data_async(asset, '1m', limit=5)
                         if df is not None and not df.empty:
                             exit_price = float(df['close'].iloc[-1])
@@ -804,11 +813,11 @@ async def check_pending_signals():
                             conn2 = get_db()
                             cur2 = conn2.cursor()
                             cur2.execute("UPDATE signals SET result = %s, exit_price = %s, checked_at = NOW() WHERE id = %s",
-                                         (result, exit_price, row['id']))
+                                         (str(result), float(exit_price), int(row['id'])))
                             conn2.commit()
                             cur2.close()
                             conn2.close()
-                            logger.info(f"✅ Сигнал #{row['id']} {row['asset']} {row['direction']} → {result}")
+                            logger.info(f"✅ Сигнал #{row['id']} {row['asset']} {row['direction']} → {result} (entry={entry}, exit={exit_price})")
                     except Exception as e:
                         logger.warning(f"Не удалось проверить сигнал {row['id']}: {e}")
         except Exception as e:
@@ -828,7 +837,7 @@ async def check_periodic_reports():
             conn.close()
             now = datetime.now(timezone.utc)
             for c in cycles:
-                uid = c['user_id']
+                uid = int(c['user_id'])
                 first_sig = c['first_signal_at']
                 for period in (10, 30, 180):
                     col = {10: 'last_sent_10_at', 30: 'last_sent_30_at', 180: 'last_sent_180_at'}[period]
