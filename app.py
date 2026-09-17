@@ -142,7 +142,7 @@ def get_db():
 
 def init_db():
     if not DATABASE_URL or not PSYCOPG_OK:
-        logger.warning("БД не настроена — авто-трекинг отключён")
+        logger.warning("БД не настроена — статистика отключена")
         return
     conn = get_db()
     cur = conn.cursor()
@@ -163,7 +163,6 @@ def init_db():
             checked_at TIMESTAMPTZ
         );
     """)
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_signals_pending ON signals(check_at) WHERE result IS NULL;")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_signals_user ON signals(user_id, created_at);")
     cur.execute("""
         CREATE TABLE IF NOT EXISTS user_cycles (
@@ -180,10 +179,10 @@ def init_db():
     logger.info("✅ База данных инициализирована")
 
 def save_signal(user_id, asset, direction, timeframe, duration, entry_price, strength):
-    if not DATABASE_URL or not PSYCOPG_OK: return
-    if direction not in ('LONG', 'SHORT'): return
+    """Сохраняет сигнал, возвращает id или None."""
+    if not DATABASE_URL or not PSYCOPG_OK: return None
+    if direction not in ('LONG', 'SHORT'): return None
     try:
-        # КРИТИЧНО: конвертируем numpy-типы в нативные Python-типы
         user_id = int(user_id)
         asset = str(asset)
         direction = str(direction)
@@ -191,13 +190,15 @@ def save_signal(user_id, asset, direction, timeframe, duration, entry_price, str
         duration = str(duration)
         entry_price = float(entry_price)
         strength = str(strength)
+        # Время, после которого можно оценивать сигнал
         check_at = datetime.now(timezone.utc) + timedelta(seconds=duration_to_seconds(duration))
         conn = get_db()
         cur = conn.cursor()
         cur.execute("""
             INSERT INTO signals (user_id, asset, direction, timeframe, duration, entry_price, strength, check_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
         """, (user_id, asset, direction, timeframe, duration, entry_price, strength, check_at))
+        signal_id = cur.fetchone()['id']
         cur.execute("""
             INSERT INTO user_cycles (user_id) VALUES (%s)
             ON CONFLICT (user_id) DO NOTHING
@@ -205,21 +206,52 @@ def save_signal(user_id, asset, direction, timeframe, duration, entry_price, str
         conn.commit()
         cur.close()
         conn.close()
-        logger.info(f"💾 Сигнал сохранён: {asset} {direction} {duration} @ {entry_price}")
+        logger.info(f"💾 Сигнал #{signal_id} сохранён: {asset} {direction} {duration} @ {entry_price}")
+        return signal_id
     except Exception as e:
         logger.error(f"save_signal error: {e}")
+        return None
+
+def get_signal(signal_id, user_id=None):
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        if user_id:
+            cur.execute("SELECT * FROM signals WHERE id = %s AND user_id = %s", (int(signal_id), int(user_id)))
+        else:
+            cur.execute("SELECT * FROM signals WHERE id = %s", (int(signal_id),))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        return row
+    except Exception as e:
+        logger.error(f"get_signal error: {e}")
+        return None
+
+def rate_signal(signal_id, result):
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("UPDATE signals SET result = %s, checked_at = NOW() WHERE id = %s", (str(result), int(signal_id)))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error(f"rate_signal error: {e}")
+        return False
 
 def get_user_cycle(user_id):
     if not DATABASE_URL or not PSYCOPG_OK: return None
     try:
         conn = get_db()
         cur = conn.cursor()
-        cur.execute("SELECT * FROM user_cycles WHERE user_id = %s", (int(user_id),))
-        row = cur.fetchone()
-        cur.close()
+него        cur.execute("SELECT * FROM user_cycles WHERE. user_id = %s", Про (int(user_id),))
+       а row = cur.fetchone()
+        cur.closeнали()
         conn.close()
         return row
-    except Exception as e:
+зиру    except Exception as e:
         logger.error(f"get_user_cycle error: {e}")
         return None
 
@@ -240,41 +272,43 @@ def get_user_stats(user_id, days):
     cur = conn.cursor()
     cur.execute("""
         SELECT
-            COUNT(*) FILTER (WHERE result IS NOT NULL) AS total,
+            COUNT(*) FILTER (WHERE result IN ('WIN', 'LOSS')) AS total,
             COUNT(*) FILTER (WHERE result = 'WIN') AS wins,
-            COUNT(*) FILTER (WHERE result = 'LOSS') AS losses
+            COUNT(*) FILTER (WHERE result = 'LOSS') AS losses,
+            COUNT(*) FILTER (WHERE result = 'SKIP') AS skipped,
+            COUNT(*) FILTER (WHERE result IS NULL) AS pending
         FROM signals WHERE user_id = %s AND created_at >= NOW() - (%s * INTERVAL '1 day')
     """, (int(user_id), int(days)))
     overall = cur.fetchone()
     cur.execute("""
         SELECT asset, COUNT(*) FILTER (WHERE result = 'WIN') AS wins,
             COUNT(*) FILTER (WHERE result = 'LOSS') AS losses,
-            COUNT(*) FILTER (WHERE result IS NOT NULL) AS total
-        FROM signals WHERE user_id = %s AND created_at >= NOW() - (%s * INTERVAL '1 day') AND result IS NOT NULL
+            COUNT(*) FILTER (WHERE result IN ('WIN','LOSS')) AS total
+        FROM signals WHERE user_id = %s AND created_at >= NOW() - (%s * INTERVAL '1 day') AND result IN ('WIN','LOSS')
         GROUP BY asset ORDER BY total DESC LIMIT 5
     """, (int(user_id), int(days)))
     by_asset = cur.fetchall()
     cur.execute("""
         SELECT timeframe, COUNT(*) FILTER (WHERE result = 'WIN') AS wins,
             COUNT(*) FILTER (WHERE result = 'LOSS') AS losses,
-            COUNT(*) FILTER (WHERE result IS NOT NULL) AS total
-        FROM signals WHERE user_id = %s AND created_at >= NOW() - (%s * INTERVAL '1 day') AND result IS NOT NULL
+            COUNT(*) FILTER (WHERE result IN ('WIN','LOSS')) AS total
+        FROM signals WHERE user_id = %s AND created_at >= NOW() - (%s * INTERVAL '1 day') AND result IN ('WIN','LOSS')
         GROUP BY timeframe ORDER BY total DESC
     """, (int(user_id), int(days)))
     by_tf = cur.fetchall()
     cur.execute("""
         SELECT strength, COUNT(*) FILTER (WHERE result = 'WIN') AS wins,
             COUNT(*) FILTER (WHERE result = 'LOSS') AS losses,
-            COUNT(*) FILTER (WHERE result IS NOT NULL) AS total
-        FROM signals WHERE user_id = %s AND created_at >= NOW() - (%s * INTERVAL '1 day') AND result IS NOT NULL
+            COUNT(*) FILTER (WHERE result IN ('WIN','LOSS')) AS total
+        FROM signals WHERE user_id = %s AND created_at >= NOW() - (%s * INTERVAL '1 day') AND result IN ('WIN','LOSS')
         GROUP BY strength
     """, (int(user_id), int(days)))
     by_strength = cur.fetchall()
     cur.execute("""
         SELECT direction, COUNT(*) FILTER (WHERE result = 'WIN') AS wins,
             COUNT(*) FILTER (WHERE result = 'LOSS') AS losses,
-            COUNT(*) FILTER (WHERE result IS NOT NULL) AS total
-        FROM signals WHERE user_id = %s AND created_at >= NOW() - (%s * INTERVAL '1 day') AND result IS NOT NULL
+            COUNT(*) FILTER (WHERE result IN ('WIN','LOSS')) AS total
+        FROM signals WHERE user_id = %s AND created_at >= NOW() - (%s * INTERVAL '1 day') AND result IN ('WIN','LOSS')
         GROUP BY direction
     """, (int(user_id), int(days)))
     by_dir = cur.fetchall()
@@ -305,16 +339,24 @@ def build_report_text(user_id, days, period_label):
     total = overall['total'] or 0
     wins = overall['wins'] or 0
     losses = overall['losses'] or 0
+    skipped = overall['skipped'] or 0
+    pending = overall['pending'] or 0
     winrate = (wins / total * 100) if total > 0 else 0
     lines = [f"🏆 *Отчёт за {period_label}*", ""]
     if total == 0:
         lines.append("_За этот период пока нет оценённых сделок._")
+        if pending > 0:
+            lines.append(f"_Есть {pending} неоценённых сигналов._")
         return "\n".join(lines)
     lines.append("📊 *ОБЩАЯ СТАТИСТИКА*")
-    lines.append(f"Всего сигналов: *{total}*")
+    lines.append(f"Оценённых сделок: *{total}*")
     lines.append(f"✅ Побед: *{wins}*")
     lines.append(f"❌ Поражений: *{losses}*")
     lines.append(f"🎯 Винрейт: *{winrate:.1f}%*")
+    if skipped > 0:
+        lines.append(f"⚪️ Пропущено: *{skipped}*")
+    if pending > 0:
+        lines.append(f"⏳ Не оценено: *{pending}*")
     lines.append("")
     if stats['by_asset']:
         lines.append("🎯 *ПО АКТИВАМ*")
@@ -351,7 +393,7 @@ def build_report_text(user_id, days, period_label):
     elif winrate >= 50:
         lines.append("💡 Средний результат. Тестируй разные таймфреймы и активы.")
     else:
-        lines.append("💡 Результат ниже среднего. Проанализируй слабые активы и снизь риск.")
+        lines.append("💡 Результат ниже средй слабые активы и снизь риск.")
     text = "\n".join(lines)
     if len(text) > 4000:
         text = text[:4000] + "\n..."
@@ -755,7 +797,7 @@ async def generate_signal(asset, duration, user_id=None):
     clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
     df = await get_market_data_async(clean_asset, timeframe, limit=limit)
     if df is None or df.empty:
-        return {'signal': 'HOLD', 'strength': 'WEAK', 'emoji': '⚪', 'reason': 'Нет данных', 'indicators': None, 'risk': None, 'timeframe': timeframe}
+        return {'signal': 'HOLD', 'strength': 'WEAK', 'emoji': '⚪', 'reason': 'Нет данных', 'indicators': None, 'risk': None, 'timeframe': timeframe, 'signal_id': None}
     ind = compute_advanced_indicators(df)
     primary_signal, reason = get_weighted_signal(ind, timeframe)
     long_tf, short_tf = await get_multi_timeframe_alignment(clean_asset, timeframe)
@@ -781,49 +823,16 @@ async def generate_signal(asset, duration, user_id=None):
     full_reason = f"{reason}\nТаймфрейм: {timeframe} (авто), свечей: {len(df)}\nМульти-ТФ: {long_tf} LONG, {short_tf} SHORT на 1H/4H"
     if tf_boost == 1: full_reason += " → усиление"
     elif tf_boost == -1: full_reason += " → противоречие, ослаблен"
+    signal_id = None
     if user_id and final_signal in ('LONG', 'SHORT'):
-        save_signal(user_id, clean_asset, final_signal, timeframe, duration, float(ind['last_close']), strength)
+        signal_id = save_signal(user_id, clean_asset, final_signal, timeframe, duration, float(ind['last_close']), strength)
     return {
         'signal': final_signal, 'strength': strength, 'emoji': emoji,
-        'reason': full_reason, 'indicators': ind, 'risk': risk, 'timeframe': timeframe
+        'reason': full_reason, 'indicators': ind, 'risk': risk, 'timeframe': timeframe,
+        'signal_id': signal_id
     }
 
-# ==================== ФОНОВЫЕ ЗАДАЧИ ====================
-async def check_pending_signals():
-    while True:
-        try:
-            if DATABASE_URL and PSYCOPG_OK:
-                conn = get_db()
-                cur = conn.cursor()
-                cur.execute("SELECT id, asset, direction, entry_price FROM signals WHERE result IS NULL AND check_at <= NOW()")
-                pending = cur.fetchall()
-                cur.close()
-                conn.close()
-                for row in pending:
-                    try:
-                        asset = str(row['asset']).replace(" OTC", "").replace("/", "").strip()
-                        df = await get_market_data_async(asset, '1m', limit=5)
-                        if df is not None and not df.empty:
-                            exit_price = float(df['close'].iloc[-1])
-                            entry = float(row['entry_price'])
-                            if row['direction'] == 'LONG':
-                                result = 'WIN' if exit_price > entry else 'LOSS'
-                            else:
-                                result = 'WIN' if exit_price < entry else 'LOSS'
-                            conn2 = get_db()
-                            cur2 = conn2.cursor()
-                            cur2.execute("UPDATE signals SET result = %s, exit_price = %s, checked_at = NOW() WHERE id = %s",
-                                         (str(result), float(exit_price), int(row['id'])))
-                            conn2.commit()
-                            cur2.close()
-                            conn2.close()
-                            logger.info(f"✅ Сигнал #{row['id']} {row['asset']} {row['direction']} → {result} (entry={entry}, exit={exit_price})")
-                    except Exception as e:
-                        logger.warning(f"Не удалось проверить сигнал {row['id']}: {e}")
-        except Exception as e:
-            logger.error(f"check_pending_signals error: {e}")
-        await asyncio.sleep(60)
-
+# ==================== ФОНОВАЯ ЗАДАЧА: АВТООТПРАВКА ОТЧЁТОВ ====================
 async def check_periodic_reports():
     while True:
         await asyncio.sleep(600)
@@ -963,11 +972,12 @@ async def send_signal_result(update, context, result, asset, duration, icon):
     signal = result['signal']; strength = result['strength']; emoji = result['emoji']
     reason = result['reason']; ind = result['indicators']; risk = result['risk']
     price = ind['last_close']; tf = result['timeframe']
+    signal_id = result.get('signal_id')
     msg = (f"{emoji} *{signal}* ({strength})\n"
            f"{icon} Актив: {asset}\n"
            f"⏱ Таймфрейм: {tf} (авто)\n"
            f"⏳ Время сделки: {duration}\n"
-           f"💰 Цена: {price:.4f}\n\n"
+           f"💰 Цена (реальная биржа): {price:.4f}\n\n"
            f"📊 *Индикаторы:*\n"
            f"RSI: {ind['rsi']:.1f}\n"
            f"MACD: {ind['macd_diff']:.4f}\n"
@@ -984,18 +994,95 @@ async def send_signal_result(update, context, result, asset, duration, icon):
            f"Take-Profit: {risk['take_profit']:.4f}\n"
            f"ATR: {risk['atr']:.4f}\n\n"
            f"ℹ️ {reason}")
-    keyboard = [
-        [InlineKeyboardButton("🔄 Дай сигнал ещё раз", callback_data="resignal")],
-        [InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]
-    ]
+    # Пометка про OTC
+    if "OTC" in asset:
+        msg += "\n\n⚠️ _Цены Pocket Option (OTC) могут отличаться от реального рынка._"
+
+    if signal in ('LONG', 'SHORT') and signal_id:
+        context.user_data['last_signal_id'] = signal_id
+        keyboard = [
+            [InlineKeyboardButton("✅ WIN", callback_data=f"rate_win_{signal_id}"),
+             InlineKeyboardButton("❌ LOSS", callback_data=f"rate_loss_{signal_id}"),
+             InlineKeyboardButton("⚪️ Пропустил", callback_data=f"rate_skip_{signal_id}")],
+            [InlineKeyboardButton("🔄 Дай сигнал ещё раз", callback_data="resignal")],
+            [InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]
+        ]
+    else:
+        context.user_data['last_signal_id'] = None
+        keyboard = [
+            [InlineKeyboardButton("🔄 Дай сигнал ещё раз", callback_data="resignal")],
+            [InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]
+        ]
     image_url = SIGNAL_IMAGES.get(signal, SIGNAL_IMAGES['HOLD'])
     try:
         await update.callback_query.message.delete()
     except: pass
     await update.effective_chat.send_photo(photo=image_url, caption=msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
 
+# ==================== ОЦЕНКА СИГНАЛА ====================
+async def handle_rating(update, context, result_type):
+    query = update.callback_query
+    user_id = update.effective_user.id
+    try:
+        signal_id = int(query.data.split("_")[-1])
+    except:
+        await query.answer("Ошибка данных сигнала.", show_alert=True)
+        return
+    row = get_signal(signal_id, user_id)
+    if row is None:
+        await query.answer("Сигнал не найден.", show_alert=True)
+        return
+    if row['result'] is not None:
+        await query.answer("Вы уже оценили этот сигнал 👍", show_alert=True)
+        return
+    now = datetime.now(timezone.utc)
+    check_at = row['check_at']
+    if check_at.tzinfo is None:
+        check_at = check_at.replace(tzinfo=timezone.utc)
+    if now < check_at:
+        await query.answer("Ваше время ещё не прошло! Голосуйте честно 👌", show_alert=True)
+        return
+    if not rate_signal(signal_id, result_type):
+        await query.answer("Ошибка записи. Попробуйте позже.", show_alert=True)
+        return
+    # Убираем кнопки оценки, оставляем навигацию
+    try:
+        await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Дай сигнал ещё раз", callback_data="resignal")],
+            [InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]
+        ]))
+    except: pass
+    context.user_data['last_signal_id'] = None
+    if result_type == 'WIN':
+        await query.answer("Победа записана! 🎉", show_alert=True)
+    elif result_type == 'LOSS':
+        await query.answer("Убыток записан. В следующий раз повезёт! 💪", show_alert=True)
+    else:
+        await query.answer("Спасибо, пропуск учтён 😚", show_alert=True)
+
+async def rate_win(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await handle_rating(update, context, 'WIN')
+
+async def rate_loss(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await handle_rating(update, context, 'LOSS')
+
+async def rate_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await handle_rating(update, context, 'SKIP')
+
+# ==================== RESIGNAL / BACK ====================
 async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    # Проверяем, оценён ли последний сигнал
+    last_id = context.user_data.get('last_signal_id')
+    if last_id:
+        row = get_signal(last_id)
+        if row and row['result'] is None:
+            check_at = row['check_at']
+            if check_at.tzinfo is None:
+                check_at = check_at.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) >= check_at:
+                await query.answer("Вы не оценили сигнал 😔 Оцените его перед следующим.", show_alert=True)
+                return
     if context.user_data.get('processing', False):
         await query.answer("⏳ Уже идёт анализ..."); return
     context.user_data['processing'] = True
@@ -1027,8 +1114,20 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     back_to = query.data
+    # Если пользователь уходит, но последний сигнал не оценён (и уже можно оценить)
+    if back_to in ('back_to_section', 'back_to_asset', 'go', 'home'):
+        last_id = context.user_data.get('last_signal_id')
+        if last_id:
+            row = get_signal(last_id)
+            if row and row['result'] is None:
+                check_at = row['check_at']
+                if check_at.tzinfo is None:
+                    check_at = check_at.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) >= check_at:
+                    await query.answer("Вы не оценили сигнал 😔", show_alert=True)
+                    return
+    await query.answer()
     if back_to == "back_to_section": await go(update, context)
     elif back_to == "back_to_asset":
         asset = context.user_data.get('asset')
@@ -1141,6 +1240,9 @@ async def setup_webhook():
     application.add_handler(CallbackQueryHandler(section_handler, pattern="^(currencies|crypto|commodities|stocks|indices)$"))
     application.add_handler(CallbackQueryHandler(asset_selected, pattern="^(" + "|".join(CURRENCIES+CRYPTO+COMMODITIES+STOCKS+INDICES) + ")$"))
     application.add_handler(CallbackQueryHandler(duration_selected, pattern="^(" + "|".join(DURATIONS) + ")$"))
+    application.add_handler(CallbackQueryHandler(rate_win, pattern="^rate_win_\\d+$"))
+    application.add_handler(CallbackQueryHandler(rate_loss, pattern="^rate_loss_\\d+$"))
+    application.add_handler(CallbackQueryHandler(rate_skip, pattern="^rate_skip_\\d+$"))
     application.add_handler(CallbackQueryHandler(resignal, pattern="^resignal$"))
     application.add_handler(CallbackQueryHandler(my_trades_handler, pattern="^my_trades$"))
     application.add_handler(CallbackQueryHandler(report_handler, pattern="^report_(10|30|180)$"))
@@ -1150,7 +1252,7 @@ async def setup_webhook():
     await application.bot.set_webhook(url=f"{RENDER_URL}/telegram")
     logger.info(f"Webhook установлен: {RENDER_URL}/telegram")
     init_db()
-    asyncio.create_task(check_pending_signals())
+    # Авто-проверка WIN/LOSS ОТКЛЮЧЕНА. Оставляем только авто-отправку отчётов.
     asyncio.create_task(check_periodic_reports())
 
 def start_loop(loop):
