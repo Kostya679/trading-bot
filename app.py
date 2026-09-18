@@ -1315,7 +1315,7 @@ async def send_signal_result(update, context, result, asset, duration, icon):
         keyboard = [
             [InlineKeyboardButton("✅ WIN", callback_data=f"rate_win_{signal_id}"),
              InlineKeyboardButton("❌ LOSS", callback_data=f"rate_loss_{signal_id}"),
-             InlineKeyboardButton("⚪️ Пропустил", callback_data=f"rate_skip_{signal_id}")],
+             InlineKeyboardButton("⚪️ SKIP", callback_data=f"rate_skip_{signal_id}")],
             [InlineKeyboardButton("🔄 Дай сигнал ещё раз", callback_data="resignal")],
             [InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]
         ]
@@ -1331,7 +1331,7 @@ async def send_signal_result(update, context, result, asset, duration, icon):
     except Exception as e:
         logger.debug(f"delete failed: {e}")
     await update.effective_chat.send_photo(photo=image_url, caption=msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
-
+    
 # ==================== ОЦЕНКА ====================
 async def handle_rating(update, context, result_type):
     query = update.callback_query
@@ -1348,13 +1348,15 @@ async def handle_rating(update, context, result_type):
     if row['result'] is not None:
         await query.answer("Вы уже оценили этот сигнал 👍", show_alert=True)
         return
-    now = datetime.now(timezone.utc)
-    check_at = row['check_at']
-    if check_at.tzinfo is None:
-        check_at = check_at.replace(tzinfo=timezone.utc)
-    if now < check_at:
-        await query.answer("Ваше время ещё не прошло! Голосуйте честно 👌", show_alert=True)
-        return
+    # Проверка времени — только для WIN и LOSS. Для SKIP не проверяем.
+    if result_type in ('WIN', 'LOSS'):
+        now = datetime.now(timezone.utc)
+        check_at = row['check_at']
+        if check_at.tzinfo is None:
+            check_at = check_at.replace(tzinfo=timezone.utc)
+        if now < check_at:
+            await query.answer("Ваше время ещё не прошло! Голосуйте честно 👌", show_alert=True)
+            return
     if not rate_signal(signal_id, result_type):
         await query.answer("Ошибка записи. Попробуйте позже.", show_alert=True)
         return
@@ -1372,7 +1374,7 @@ async def handle_rating(update, context, result_type):
         await query.answer("Убыток записан. В следующий раз повезёт! 💪", show_alert=True)
     else:
         await query.answer("Спасибо, пропуск учтён 😚", show_alert=True)
-
+        
 async def rate_win(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await handle_rating(update, context, 'WIN')
 
