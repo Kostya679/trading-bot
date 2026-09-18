@@ -85,7 +85,6 @@ FOREX_LIST = [
     'GBPCHF', 'USDCNH', 'USDHKD', 'USDMXN', 'USDSEK', 'USDSGD', 'USDZAR'
 ]
 
-# Кэш для крипты, чтобы не спамить Binance
 _binance_cache = {}
 _binance_cache_time = {}
 
@@ -136,11 +135,13 @@ CRYPTO_LIST = ['BTC', 'ETH', 'LTC', 'XRP', 'SOL', 'ADA', 'DOT', 'LINK', 'BNB']
 
 def get_yfinance_symbol(symbol):
     norm = symbol.replace(" ", "").upper()
+    # КРИПТА в Yahoo: BTC-USD, ETH-USD и т.д.
+    for c in CRYPTO_LIST:
+        if norm == c + 'USD' or norm == c + 'USDT':
+            return c + '-USD'
     for key, config in SYMBOL_CONFIG.items():
         if key.replace(" ", "").upper() == norm:
             return config['yfinance']
-    if norm in [c + 'USD' for c in CRYPTO_LIST]:
-        return None
     if norm in FOREX_LIST:
         return norm + '=X'
     if norm in STOCK_ALTERNATIVES:
@@ -598,12 +599,15 @@ async def fetch_market_data_async(symbol, timeframe, limit=300):
                 td_symbol = config['twelvedata']
                 break
         tasks.append(("twelvedata", asyncio.ensure_future(asyncio.to_thread(fetch_twelvedata, td_symbol, timeframe, limit))))
+
     yf_symbol = get_yfinance_symbol(symbol)
     if yf_symbol:
         tasks.append(("yahoo", asyncio.ensure_future(asyncio.to_thread(fetch_yfinance, yf_symbol, timeframe, limit))))
+
     if symbol.upper() in [c + 'USD' for c in CRYPTO_LIST]:
         tasks.append(("binance", asyncio.ensure_future(asyncio.to_thread(fetch_binance, symbol, timeframe, limit))))
         tasks.append(("cryptocompare", asyncio.ensure_future(asyncio.to_thread(fetch_cryptocompare, symbol, timeframe, limit))))
+
     errors = []
     for name, task in tasks:
         try:
@@ -653,7 +657,6 @@ def fetch_yfinance(symbol, timeframe, limit, retries=3):
     raise Exception("Yahoo недоступен")
 
 def fetch_binance(symbol, timeframe, limit):
-    """Binance через прямой HTTP с кэшем и задержкой."""
     interval = BINANCE_INTERVAL_MAP.get(timeframe, '1m')
     if timeframe == '4h':
         interval = '4h'
@@ -667,14 +670,11 @@ def fetch_binance(symbol, timeframe, limit):
 
     cache_key = f"{symbol_binance}_{interval}_{limit}"
     now = time.time()
-    # Если в кэше свежий результат (< 30 сек), отдаём его
     if cache_key in _binance_cache and (now - _binance_cache_time.get(cache_key, 0)) < 30:
         logger.info(f"📦 Binance cache hit для {symbol_binance}")
         return _binance_cache[cache_key]
 
-    # Задержка, чтобы не спамить
     time.sleep(2)
-
     url = f"https://api.binance.com/api/v3/klines?symbol={symbol_binance}&interval={interval}&limit={min(limit, 1000)}"
     try:
         r = requests.get(url, timeout=15)
@@ -700,7 +700,6 @@ def fetch_binance(symbol, timeframe, limit):
     return result
 
 def fetch_cryptocompare(symbol, timeframe, limit):
-    """CryptoCompare — бесплатный fallback для крипты."""
     sym = symbol.upper()
     if sym.endswith('USDT'):
         fsym = sym[:-4]
@@ -712,7 +711,7 @@ def fetch_cryptocompare(symbol, timeframe, limit):
         fsym = sym
         tsym = 'USD'
 
-    if timeframe in ('5s','10s','15s','30s','1m','2m','3m','4m','5m','6m','8m','10m','15m','20m','25m','30m'):
+    if timeframe.endswith('s') or timeframe in ('1m','2m','3m','4m','5m','6m','8m','10m','15m','20m','25m','30m'):
         endpoint = 'histominute'
         agg_map = {'1m':1,'2m':2,'3m':3,'4m':4,'5m':5,'6m':6,'8m':8,'10m':10,'15m':15,'20m':20,'25m':25,'30m':30}
         aggregate = agg_map.get(timeframe, 1)
@@ -723,11 +722,18 @@ def fetch_cryptocompare(symbol, timeframe, limit):
         agg_map = {'45m':1,'1h':1,'2h':2,'3h':3,'4h':4}
         aggregate = agg_map.get(timeframe, 1)
 
-    url = f"https://min-api.cryptocompare.com/data/v2/{endpoint}?fsym={fsym}&tsym={tsym}&limit={min(limit, 2000)}&aggregate={aggregate}"
-    r = requests.get(url, timeout=15)
-    data = r.json()
+    url = f"https://min-api.cryptocompare.com/data/v2/{endpoint}"
+    params = {'fsym': fsym, 'tsym': tsym, 'limit': min(limit, 2000), 'aggregate': aggregate}
+    try:
+        r = requests.get(url, params=params, timeout=15)
+    except Exception as e:
+        raise Exception(f"CryptoCompare network error: {e}")
+    try:
+        data = r.json()
+    except Exception as e:
+        raise Exception(f"CryptoCompare json error: {e}")
     if data.get('Response') != 'Success':
-        raise Exception(f"CryptoCompare: {data.get('Message', 'unknown')}")
+        raise Exception(f"CryptoCompare: {data.get('Message') or data.get('Response') or 'unknown'}")
     values = data.get('Data', {}).get('Data', [])
     if not values:
         raise Exception("Нет данных CryptoCompare")
@@ -1189,8 +1195,8 @@ async def go(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     try:
         await query.message.delete()
-    except:
-        pass
+    except Exception as e:
+        logger.debug(f"delete failed: {e}")
     await update.effective_chat.send_message("Выберите раздел:", reply_markup=build_main_menu())
 
 async def section_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1255,8 +1261,8 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Timeout in duration_selected")
         try:
             await query.message.delete()
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"delete failed: {e}")
         await update.effective_chat.send_message("⏰ Превышено время.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Назад", callback_data="home")]]))
     except Exception as e:
         logger.error(f"duration_selected error: {e}")
@@ -1265,8 +1271,8 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg = f"❌ Для {asset} нет данных. Попробуйте больший ТФ."
         try:
             await query.message.delete()
-        except:
-            pass
+        except Exception as e2:
+            logger.debug(f"delete failed: {e2}")
         await update.effective_chat.send_message(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Назад", callback_data="home")]]))
     finally:
         context.user_data['processing'] = False
@@ -1323,8 +1329,8 @@ async def send_signal_result(update, context, result, asset, duration, icon):
     image_url = SIGNAL_IMAGES.get(signal, SIGNAL_IMAGES['HOLD'])
     try:
         await update.callback_query.message.delete()
-    except:
-        pass
+    except Exception as e:
+        logger.debug(f"delete failed: {e}")
     await update.effective_chat.send_photo(photo=image_url, caption=msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
 
 # ==================== ОЦЕНКА ====================
@@ -1350,12 +1356,10 @@ async def handle_rating(update, context, result_type):
     if now < check_at:
         await query.answer("Ваше время ещё не прошло! Голосуйте честно 👌", show_alert=True)
         return
-    # Сначала сохраняем результат
     if not rate_signal(signal_id, result_type):
         await query.answer("Ошибка записи. Попробуйте позже.", show_alert=True)
         return
     context.user_data['last_signal_id'] = None
-    # ⚠️ Показываем popup СРАЗУ, потом правим клавиатуру
     if result_type == 'WIN':
         await query.answer("Победа записана! 🎉", show_alert=True)
     elif result_type == 'LOSS':
@@ -1407,8 +1411,8 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         icon = ASSET_ICONS.get(asset, "")
         try:
             await query.message.delete()
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"delete failed: {e}")
         temp_msg = await update.effective_chat.send_message(f"{icon} ⏳ Анализирую рынок...")
         clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
         user_id = update.effective_user.id
@@ -1417,23 +1421,23 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if temp_msg:
             try:
                 await temp_msg.delete()
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"temp delete failed: {e}")
     except asyncio.TimeoutError:
         logger.error("Timeout in resignal")
         if temp_msg:
             try:
                 await temp_msg.delete()
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"temp delete failed: {e}")
         await update.effective_chat.send_message("⏰ Превышено время.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Назад", callback_data="home")]]))
     except Exception as e:
         logger.error(f"resignal error: {e}")
         if temp_msg:
             try:
                 await temp_msg.delete()
-            except:
-                pass
+            except Exception as e2:
+                logger.debug(f"temp delete failed: {e2}")
         await update.effective_chat.send_message(f"❌ Ошибка: {str(e)}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Назад", callback_data="home")]]))
     finally:
         context.user_data['processing'] = False
