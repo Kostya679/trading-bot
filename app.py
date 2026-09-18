@@ -101,10 +101,14 @@ def get_timeframe_from_duration(duration, asset_name):
     is_forex = asset_name in FOREX_LIST
     if is_index or is_commodity or is_forex:
         return '15m' if seconds <= 900 else '1h'
-    if seconds <= 60: return '1m'
-    elif seconds <= 300: return '5m'
-    elif seconds <= 900: return '15m'
-    elif seconds <= 3600: return '1h'
+    if seconds <= 60:
+        return '1m'
+    elif seconds <= 300:
+        return '5m'
+    elif seconds <= 900:
+        return '15m'
+    elif seconds <= 3600:
+        return '1h'
     return '1h'
 
 def get_candle_limit(timeframe):
@@ -131,9 +135,12 @@ def get_yfinance_symbol(symbol):
     for key, config in SYMBOL_CONFIG.items():
         if key.replace(" ", "").upper() == norm:
             return config['yfinance']
-    if norm in [c + 'USD' for c in CRYPTO_LIST]: return None
-    if norm in FOREX_LIST: return norm + '=X'
-    if norm in STOCK_ALTERNATIVES: return norm
+    if norm in [c + 'USD' for c in CRYPTO_LIST]:
+        return None
+    if norm in FOREX_LIST:
+        return norm + '=X'
+    if norm in STOCK_ALTERNATIVES:
+        return norm
     return symbol
 
 # ==================== БАЗА ДАННЫХ ====================
@@ -179,9 +186,10 @@ def init_db():
     logger.info("✅ База данных инициализирована")
 
 def save_signal(user_id, asset, direction, timeframe, duration, entry_price, strength):
-    """Сохраняет сигнал, возвращает id или None."""
-    if not DATABASE_URL or not PSYCOPG_OK: return None
-    if direction not in ('LONG', 'SHORT'): return None
+    if not DATABASE_URL or not PSYCOPG_OK:
+        return None
+    if direction not in ('LONG', 'SHORT'):
+        return None
     try:
         user_id = int(user_id)
         asset = str(asset)
@@ -190,7 +198,6 @@ def save_signal(user_id, asset, direction, timeframe, duration, entry_price, str
         duration = str(duration)
         entry_price = float(entry_price)
         strength = str(strength)
-        # Время, после которого можно оценивать сигнал
         check_at = datetime.now(timezone.utc) + timedelta(seconds=duration_to_seconds(duration))
         conn = get_db()
         cur = conn.cursor()
@@ -242,16 +249,17 @@ def rate_signal(signal_id, result):
         return False
 
 def get_user_cycle(user_id):
-    if not DATABASE_URL or not PSYCOPG_OK: return None
+    if not DATABASE_URL or not PSYCOPG_OK:
+        return None
     try:
         conn = get_db()
         cur = conn.cursor()
-него        cur.execute("SELECT * FROM user_cycles WHERE. user_id = %s", Про (int(user_id),))
-       а row = cur.fetchone()
-        cur.closeнали()
+        cur.execute("SELECT * FROM user_cycles WHERE user_id = %s", (int(user_id),))
+        row = cur.fetchone()
+        cur.close()
         conn.close()
         return row
-зиру    except Exception as e:
+    except Exception as e:
         logger.error(f"get_user_cycle error: {e}")
         return None
 
@@ -319,14 +327,18 @@ def get_user_stats(user_id, days):
 
 def format_remaining(delta):
     total = int(delta.total_seconds())
-    if total <= 0: return "меньше минуты"
+    if total <= 0:
+        return "меньше минуты"
     days = total // 86400
     hours = (total % 86400) // 3600
     minutes = (total % 3600) // 60
     parts = []
-    if days > 0: parts.append(f"{days}д")
-    if hours > 0: parts.append(f"{hours}ч")
-    if minutes > 0: parts.append(f"{minutes}м")
+    if days > 0:
+        parts.append(f"{days}д")
+    if hours > 0:
+        parts.append(f"{hours}ч")
+    if minutes > 0:
+        parts.append(f"{minutes}м")
     return " ".join(parts) if parts else "меньше минуты"
 
 def progress_bar(percent, length=15):
@@ -361,28 +373,32 @@ def build_report_text(user_id, days, period_label):
     if stats['by_asset']:
         lines.append("🎯 *ПО АКТИВАМ*")
         for row in stats['by_asset']:
-            t = row['total'] or 0; w = row['wins'] or 0
+            t = row['total'] or 0
+            w = row['wins'] or 0
             wr = (w / t * 100) if t > 0 else 0
             lines.append(f"• {row['asset']}: {wr:.0f}% ({w}/{t})")
         lines.append("")
     if stats['by_tf']:
         lines.append("⏱ *ПО ТАЙМФРЕЙМАМ*")
         for row in stats['by_tf']:
-            t = row['total'] or 0; w = row['wins'] or 0
+            t = row['total'] or 0
+            w = row['wins'] or 0
             wr = (w / t * 100) if t > 0 else 0
             lines.append(f"• {row['timeframe']}: {wr:.0f}% ({w}/{t})")
         lines.append("")
     if stats['by_strength']:
         lines.append("💪 *ПО СИЛЕ*")
         for row in stats['by_strength']:
-            t = row['total'] or 0; w = row['wins'] or 0
+            t = row['total'] or 0
+            w = row['wins'] or 0
             wr = (w / t * 100) if t > 0 else 0
             lines.append(f"• {row['strength']}: {wr:.0f}% ({w}/{t})")
         lines.append("")
     if stats['by_dir']:
         lines.append("📈 *ПО НАПРАВЛЕНИЮ*")
         for row in stats['by_dir']:
-            t = row['total'] or 0; w = row['wins'] or 0
+            t = row['total'] or 0
+            w = row['wins'] or 0
             wr = (w / t * 100) if t > 0 else 0
             lines.append(f"• {row['direction']}: {wr:.0f}% ({w}/{t})")
         lines.append("")
@@ -393,7 +409,7 @@ def build_report_text(user_id, days, period_label):
     elif winrate >= 50:
         lines.append("💡 Средний результат. Тестируй разные таймфреймы и активы.")
     else:
-        lines.append("💡 Результат ниже средй слабые активы и снизь риск.")
+        lines.append("💡 Результат ниже среднего. Проанализируй слабые активы и снизь риск.")
     text = "\n".join(lines)
     if len(text) > 4000:
         text = text[:4000] + "\n..."
@@ -401,8 +417,10 @@ def build_report_text(user_id, days, period_label):
 
 # ==================== ПАТТЕРНЫ ====================
 def detect_candle_patterns(df):
-    if len(df) < 2: return {'engulfing': 0, 'hammer': 0, 'doji': 0}
-    last = df.iloc[-1]; prev = df.iloc[-2]
+    if len(df) < 2:
+        return {'engulfing': 0, 'hammer': 0, 'doji': 0}
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
     body = abs(last['close'] - last['open'])
     upper_wick = last['high'] - max(last['close'], last['open'])
     lower_wick = min(last['close'], last['open']) - last['low']
@@ -417,82 +435,108 @@ def detect_candle_patterns(df):
     return {'engulfing': engulfing, 'hammer': hammer, 'doji': doji}
 
 def detect_morning_star(df):
-    if len(df) < 3: return 0
+    if len(df) < 3:
+        return 0
     c1, c2, c3 = df.iloc[-3], df.iloc[-2], df.iloc[-1]
-    if c1['close'] >= c1['open']: return 0
-    body2 = abs(c2['close'] - c2['open']); range2 = c2['high'] - c2['low']
-    if range2 == 0 or body2 / range2 > 0.3 or c2['high'] > c1['low']: return 0
-    if c3['close'] <= c3['open'] or c3['close'] < (c1['open'] + c1['close']) / 2: return 0
+    if c1['close'] >= c1['open']:
+        return 0
+    body2 = abs(c2['close'] - c2['open'])
+    range2 = c2['high'] - c2['low']
+    if range2 == 0 or body2 / range2 > 0.3 or c2['high'] > c1['low']:
+        return 0
+    if c3['close'] <= c3['open'] or c3['close'] < (c1['open'] + c1['close']) / 2:
+        return 0
     return 1
 
 def detect_evening_star(df):
-    if len(df) < 3: return 0
+    if len(df) < 3:
+        return 0
     c1, c2, c3 = df.iloc[-3], df.iloc[-2], df.iloc[-1]
-    if c1['close'] <= c1['open']: return 0
-    body2 = abs(c2['close'] - c2['open']); range2 = c2['high'] - c2['low']
-    if range2 == 0 or body2 / range2 > 0.3 or c2['low'] < c1['high']: return 0
-    if c3['close'] >= c3['open'] or c3['close'] > (c1['open'] + c1['close']) / 2: return 0
+    if c1['close'] <= c1['open']:
+        return 0
+    body2 = abs(c2['close'] - c2['open'])
+    range2 = c2['high'] - c2['low']
+    if range2 == 0 or body2 / range2 > 0.3 or c2['low'] < c1['high']:
+        return 0
+    if c3['close'] >= c3['open'] or c3['close'] > (c1['open'] + c1['close']) / 2:
+        return 0
     return 1
 
 def detect_hanging_man(df):
-    if len(df) < 1: return 0
+    if len(df) < 1:
+        return 0
     last = df.iloc[-1]
     body = abs(last['close'] - last['open'])
     lower_wick = min(last['close'], last['open']) - last['low']
     upper_wick = last['high'] - max(last['close'], last['open'])
-    if lower_wick > 2 * body and upper_wick < body * 0.3: return -1
+    if lower_wick > 2 * body and upper_wick < body * 0.3:
+        return -1
     return 0
 
 def detect_shooting_star(df):
-    if len(df) < 1: return 0
+    if len(df) < 1:
+        return 0
     last = df.iloc[-1]
     body = abs(last['close'] - last['open'])
     upper_wick = last['high'] - max(last['close'], last['open'])
     lower_wick = min(last['close'], last['open']) - last['low']
-    if upper_wick > 2 * body and lower_wick < body * 0.3: return -1
+    if upper_wick > 2 * body and lower_wick < body * 0.3:
+        return -1
     return 0
 
 def detect_double_bottom(df, lookback=30, tolerance=0.02):
-    if len(df) < lookback: return 0
+    if len(df) < lookback:
+        return 0
     recent = df.iloc[-lookback:]
     lows = recent['low']
     min1_pos = lows.values.argmin()
-    if min1_pos + 5 >= len(lows): return 0
+    if min1_pos + 5 >= len(lows):
+        return 0
     second_part = lows.iloc[min1_pos+5:]
-    if len(second_part) == 0: return 0
+    if len(second_part) == 0:
+        return 0
     min2_pos = second_part.values.argmin() + (min1_pos+5)
-    if abs(lows.iloc[min1_pos] - lows.iloc[min2_pos]) / lows.iloc[min1_pos] > tolerance: return 0
+    if abs(lows.iloc[min1_pos] - lows.iloc[min2_pos]) / lows.iloc[min1_pos] > tolerance:
+        return 0
     max_between = recent['high'].iloc[min1_pos:min2_pos+1].max()
-    if max_between < max(lows.iloc[min1_pos], lows.iloc[min2_pos]) * 1.02: return 0
+    if max_between < max(lows.iloc[min1_pos], lows.iloc[min2_pos]) * 1.02:
+        return 0
     if df['close'].iloc[-1] > max_between:
         avg_vol = df['volume'].iloc[-20:].mean()
         return 2 if df['volume'].iloc[-1] > avg_vol * 1.2 else 1
     return 0
 
 def detect_double_top(df, lookback=30, tolerance=0.02):
-    if len(df) < lookback: return 0
+    if len(df) < lookback:
+        return 0
     recent = df.iloc[-lookback:]
     highs = recent['high']
     max1_pos = highs.values.argmax()
-    if max1_pos + 5 >= len(highs): return 0
+    if max1_pos + 5 >= len(highs):
+        return 0
     second_part = highs.iloc[max1_pos+5:]
-    if len(second_part) == 0: return 0
+    if len(second_part) == 0:
+        return 0
     max2_pos = second_part.values.argmax() + (max1_pos+5)
-    if abs(highs.iloc[max1_pos] - highs.iloc[max2_pos]) / highs.iloc[max1_pos] > tolerance: return 0
+    if abs(highs.iloc[max1_pos] - highs.iloc[max2_pos]) / highs.iloc[max1_pos] > tolerance:
+        return 0
     min_between = recent['low'].iloc[max1_pos:max2_pos+1].min()
-    if min_between > min(highs.iloc[max1_pos], highs.iloc[max2_pos]) * 0.98: return 0
+    if min_between > min(highs.iloc[max1_pos], highs.iloc[max2_pos]) * 0.98:
+        return 0
     if df['close'].iloc[-1] < min_between:
         avg_vol = df['volume'].iloc[-20:].mean()
         return -2 if df['volume'].iloc[-1] > avg_vol * 1.2 else -1
     return 0
 
 def detect_head_shoulders(df, lookback=40):
-    if len(df) < lookback: return 0
+    if len(df) < lookback:
+        return 0
     recent = df.iloc[-lookback:]
     highs = recent['high']
     peaks = []
     for i in range(5, len(highs)-5):
-        if highs.iloc[i] == highs.iloc[i-5:i+5].max(): peaks.append((i, highs.iloc[i]))
+        if highs.iloc[i] == highs.iloc[i-5:i+5].max():
+            peaks.append((i, highs.iloc[i]))
     if len(peaks) >= 3:
         p1, p2, p3 = peaks[-3], peaks[-2], peaks[-1]
         if p2[1] > p1[1] and p2[1] > p3[1] and abs(p1[1] - p3[1]) / p1[1] <= 0.03:
@@ -503,7 +547,8 @@ def detect_head_shoulders(df, lookback=40):
     lows = recent['low']
     valleys = []
     for i in range(5, len(lows)-5):
-        if lows.iloc[i] == lows.iloc[i-5:i+5].min(): valleys.append((i, lows.iloc[i]))
+        if lows.iloc[i] == lows.iloc[i-5:i+5].min():
+            valleys.append((i, lows.iloc[i]))
     if len(valleys) >= 3:
         v1, v2, v3 = valleys[-3], valleys[-2], valleys[-1]
         if v2[1] < v1[1] and v2[1] < v3[1] and abs(v1[1] - v3[1]) / v1[1] <= 0.03:
@@ -514,25 +559,34 @@ def detect_head_shoulders(df, lookback=40):
     return 0
 
 def calculate_pivot_points(df):
-    if len(df) < 2: return None
-    high = df['high'].max(); low = df['low'].min(); close = df['close'].iloc[-1]
+    if len(df) < 2:
+        return None
+    high = df['high'].max()
+    low = df['low'].min()
+    close = df['close'].iloc[-1]
     pivot = (high + low + close) / 3
     return {'pivot': pivot, 'r1': 2*pivot - low, 's1': 2*pivot - high,
             'r2': pivot + (high - low), 's2': pivot - (high - low)}
 
 def volume_analysis(df):
-    if len(df) < 20: return 0
+    if len(df) < 20:
+        return 0
     avg_volume = df['volume'].iloc[-20:].mean()
     current_volume = df['volume'].iloc[-1]
-    if current_volume > avg_volume * 1.5: return 1
-    elif current_volume < avg_volume * 0.5: return -1
+    if current_volume > avg_volume * 1.5:
+        return 1
+    elif current_volume < avg_volume * 0.5:
+        return -1
     return 0
 
 def get_session(time_utc):
     hour = time_utc.hour
-    if 0 <= hour < 8: return "ASIA"
-    elif 8 <= hour < 14: return "LONDON"
-    elif 14 <= hour < 22: return "NEW_YORK"
+    if 0 <= hour < 8:
+        return "ASIA"
+    elif 8 <= hour < 14:
+        return "LONDON"
+    elif 14 <= hour < 22:
+        return "NEW_YORK"
     return "OVERLAP"
 
 # ==================== ДАННЫЕ ====================
@@ -542,7 +596,8 @@ async def fetch_market_data_async(symbol, timeframe, limit=300):
         td_symbol = symbol
         for key, config in SYMBOL_CONFIG.items():
             if key.replace(" ", "").upper() == symbol.upper():
-                td_symbol = config['twelvedata']; break
+                td_symbol = config['twelvedata']
+                break
         tasks.append(("twelvedata", asyncio.ensure_future(asyncio.to_thread(fetch_twelvedata, td_symbol, timeframe, limit))))
     yf_symbol = get_yfinance_symbol(symbol)
     if yf_symbol:
@@ -570,20 +625,31 @@ async def get_market_data_async(symbol, timeframe, limit=300):
 
 def fetch_yfinance(symbol, timeframe, limit, retries=3):
     interval = YFINANCE_INTERVAL_MAP.get(timeframe, timeframe)
-    if timeframe == '4h': interval = '1h'
+    # Yahoo имеет ограничения по периоду для разных интервалов
+    if interval == '1m':
+        period = '7d'
+    elif interval in ('2m', '5m', '15m', '30m'):
+        period = '60d'
+    else:
+        period = '730d'
+    if timeframe == '4h':
+        interval = '1h'
+        period = '730d'
     for attempt in range(retries):
         try:
             time.sleep(3)
             ticker = yf.Ticker(symbol)
-            df = ticker.history(period='30d', interval=interval)
-            if df.empty: raise Exception("Нет данных Yahoo")
+            df = ticker.history(period=period, interval=interval)
+            if df.empty:
+                raise Exception("Нет данных Yahoo")
             if timeframe == '4h':
                 df = df.resample('4h').agg({'Open':'first','High':'max','Low':'min','Close':'last','Volume':'sum'}).dropna()
             df = df.iloc[-limit:]
             return df[['Open','High','Low','Close','Volume']].rename(columns={'Open':'open','High':'high','Low':'low','Close':'close','Volume':'volume'})
         except Exception as e:
             if '401' in str(e) or '429' in str(e):
-                time.sleep(5 * (attempt+1)); continue
+                time.sleep(5 * (attempt + 1))
+                continue
             raise
     raise Exception("Yahoo недоступен")
 
@@ -594,16 +660,19 @@ def fetch_binance(symbol, timeframe, limit):
         raise Exception("python-binance не установлен")
     client = Client()
     interval = BINANCE_INTERVAL_MAP.get(timeframe, '1m')
-    if timeframe == '4h': interval = '4h'
+    if timeframe == '4h':
+        interval = '4h'
     if symbol.upper().endswith('USD'):
         base = symbol.upper()[:-3]
         symbol_binance = base + 'USDT'
     else:
         symbol_binance = symbol.upper()
     klines = client.get_klines(symbol=symbol_binance, interval=interval, limit=limit)
-    if not klines: raise Exception("Нет данных Binance")
+    if not klines:
+        raise Exception("Нет данных Binance")
     df = pd.DataFrame(klines, columns=['timestamp','open','high','low','close','volume','ct','qav','trades','tbbav','tbqav','ignore'])
-    for c in ['open','high','low','close','volume']: df[c] = df[c].astype(float)
+    for c in ['open','high','low','close','volume']:
+        df[c] = df[c].astype(float)
     return df[['open','high','low','close','volume']]
 
 def fetch_twelvedata(symbol, timeframe, limit):
@@ -612,18 +681,25 @@ def fetch_twelvedata(symbol, timeframe, limit):
     params = {'symbol':symbol, 'interval':interval, 'outputsize':limit, 'apikey':TWELVE_DATA_API_KEY}
     resp = requests.get(url, params=params, timeout=15)
     data = resp.json()
-    if 'values' not in data or len(data['values']) == 0: raise Exception("Нет данных Twelve Data")
+    if 'values' not in data or len(data['values']) == 0:
+        raise Exception("Нет данных Twelve Data")
     df = pd.DataFrame(data['values'])
     for col in ['open','high','low','close']:
-        if col not in df.columns: raise Exception(f"Нет колонки {col}")
-    if 'volume' not in df.columns: df['volume'] = 0
-    for c in ['open','high','low','close','volume']: df[c] = df[c].astype(float)
+        if col not in df.columns:
+            raise Exception(f"Нет колонки {col}")
+    if 'volume' not in df.columns:
+        df['volume'] = 0
+    for c in ['open','high','low','close','volume']:
+        df[c] = df[c].astype(float)
     df = df.iloc[::-1].reset_index(drop=True)
     return df[['open','high','low','close','volume']]
 
 # ==================== ИНДИКАТОРЫ ====================
 def compute_advanced_indicators(df):
-    close = df['close']; high = df['high']; low = df['low']; volume = df['volume']
+    close = df['close']
+    high = df['high']
+    low = df['low']
+    volume = df['volume']
     rsi = ta.momentum.RSIIndicator(close, 14).rsi().iloc[-1] if not pd.isna(ta.momentum.RSIIndicator(close, 14).rsi().iloc[-1]) else 50
     macd = ta.trend.MACD(close)
     macd_diff = macd.macd_diff().iloc[-1] if not pd.isna(macd.macd_diff().iloc[-1]) else 0
@@ -637,9 +713,11 @@ def compute_advanced_indicators(df):
     stoch_k = stoch.stoch().iloc[-1] if not pd.isna(stoch.stoch().iloc[-1]) else 50
     stoch_d = stoch.stoch_signal().iloc[-1] if not pd.isna(stoch.stoch_signal().iloc[-1]) else 50
     adx = ta.trend.ADXIndicator(high, low, close, 14).adx().iloc[-1] if not pd.isna(ta.trend.ADXIndicator(high, low, close, 14).adx().iloc[-1]) else 25
-    high_9 = high.rolling(9).max().iloc[-1]; low_9 = low.rolling(9).min().iloc[-1]
+    high_9 = high.rolling(9).max().iloc[-1]
+    low_9 = low.rolling(9).min().iloc[-1]
     tenkan = (high_9 + low_9) / 2
-    high_26 = high.rolling(26).max().iloc[-1]; low_26 = low.rolling(26).min().iloc[-1]
+    high_26 = high.rolling(26).max().iloc[-1]
+    low_26 = low.rolling(26).min().iloc[-1]
     kijun = (high_26 + low_26) / 2
     ichimoku = 1 if close.iloc[-1] > tenkan and close.iloc[-1] > kijun else -1 if close.iloc[-1] < tenkan and close.iloc[-1] < kijun else 0
     atr = ta.volatility.AverageTrueRange(high, low, close, 10).average_true_range().iloc[-1] if not pd.isna(ta.volatility.AverageTrueRange(high, low, close, 10).average_true_range().iloc[-1]) else close.iloc[-1]*0.01
@@ -649,7 +727,8 @@ def compute_advanced_indicators(df):
     vwap = (volume * (high + low + close) / 3).sum() / volume.sum() if volume.sum() > 0 else close.iloc[-1]
     vwap_signal = 1 if close.iloc[-1] > vwap else -1 if close.iloc[-1] < vwap else 0
     def hma(series, period=20):
-        half = int(period/2); sqrt_p = int(np.sqrt(period))
+        half = int(period/2)
+        sqrt_p = int(np.sqrt(period))
         wma_half = series.rolling(half).apply(lambda x: np.sum(np.arange(1, half+1)*x)/np.sum(np.arange(1, half+1)) if len(x)==half else np.nan, raw=True)
         wma_full = series.rolling(period).apply(lambda x: np.sum(np.arange(1, period+1)*x)/np.sum(np.arange(1, period+1)) if len(x)==period else np.nan, raw=True)
         hma_series = 2*wma_half - wma_full
@@ -702,90 +781,196 @@ def get_weighted_signal(indicators, timeframe='1h'):
         for key in ['engulfing', 'hammer', 'morning_star', 'evening_star', 'hanging_man', 'shooting_star', 'double_bottom', 'double_top', 'head_shoulders']:
             weights[key] *= 0.7
     vl, vs, reasons = 0, 0, []
-    if indicators['rsi'] < 30: vl += weights['rsi']; reasons.append(f"RSI={indicators['rsi']:.1f} (перепроданность)")
-    elif indicators['rsi'] > 70: vs += weights['rsi']; reasons.append(f"RSI={indicators['rsi']:.1f} (перекупленность)")
+    if indicators['rsi'] < 30:
+        vl += weights['rsi']
+        reasons.append(f"RSI={indicators['rsi']:.1f} (перепроданность)")
+    elif indicators['rsi'] > 70:
+        vs += weights['rsi']
+        reasons.append(f"RSI={indicators['rsi']:.1f} (перекупленность)")
     if indicators['macd_diff'] > 0 and indicators['macd_line'] > indicators['macd_signal']:
-        vl += weights['macd']; reasons.append("MACD бычье")
+        vl += weights['macd']
+        reasons.append("MACD бычье")
     elif indicators['macd_diff'] < 0 and indicators['macd_line'] < indicators['macd_signal']:
-        vs += weights['macd']; reasons.append("MACD медвежье")
-    if indicators['ema9'] > indicators['ema21']: vl += weights['ema']; reasons.append("EMA9 > EMA21")
-    else: vs += weights['ema']; reasons.append("EMA9 < EMA21")
+        vs += weights['macd']
+        reasons.append("MACD медвежье")
+    if indicators['ema9'] > indicators['ema21']:
+        vl += weights['ema']
+        reasons.append("EMA9 > EMA21")
+    else:
+        vs += weights['ema']
+        reasons.append("EMA9 < EMA21")
     last = indicators['last_close']
-    if last <= indicators['bb_low']: vl += weights['bollinger']; reasons.append("Цена у нижней полосы")
-    elif last >= indicators['bb_high']: vs += weights['bollinger']; reasons.append("Цена у верхней полосы")
-    if indicators['stoch_k'] < 20 and indicators['stoch_d'] < 20: vl += weights['stoch']; reasons.append("Stoch перепродан")
-    elif indicators['stoch_k'] > 80 and indicators['stoch_d'] > 80: vs += weights['stoch']; reasons.append("Stoch перекуплен")
+    if last <= indicators['bb_low']:
+        vl += weights['bollinger']
+        reasons.append("Цена у нижней полосы")
+    elif last >= indicators['bb_high']:
+        vs += weights['bollinger']
+        reasons.append("Цена у верхней полосы")
+    if indicators['stoch_k'] < 20 and indicators['stoch_d'] < 20:
+        vl += weights['stoch']
+        reasons.append("Stoch перепродан")
+    elif indicators['stoch_k'] > 80 and indicators['stoch_d'] > 80:
+        vs += weights['stoch']
+        reasons.append("Stoch перекуплен")
     if indicators['adx'] > 25:
-        if indicators['ema9'] > indicators['ema21']: vl += weights['adx']; reasons.append(f"ADX={indicators['adx']:.1f} (тренд вверх)")
-        else: vs += weights['adx']; reasons.append(f"ADX={indicators['adx']:.1f} (тренд вниз)")
-    if indicators['ichimoku'] > 0: vl += weights['ichimoku']; reasons.append("Ichimoku бычий")
-    elif indicators['ichimoku'] < 0: vs += weights['ichimoku']; reasons.append("Ichimoku медвежий")
-    if indicators['supertrend'] > 0: vl += weights['supertrend']; reasons.append("SuperTrend бычий")
-    elif indicators['supertrend'] < 0: vs += weights['supertrend']; reasons.append("SuperTrend медвежий")
-    if indicators['vwap'] > 0: vl += weights['vwap']; reasons.append("Цена выше VWAP")
-    elif indicators['vwap'] < 0: vs += weights['vwap']; reasons.append("Цена ниже VWAP")
-    if indicators['hma'] > 0: vl += weights['hma']; reasons.append("HMA бычий")
-    elif indicators['hma'] < 0: vs += weights['hma']; reasons.append("HMA медвежий")
-    if indicators['stoch_rsi'] > 0: vl += weights['stoch_rsi']; reasons.append("Stoch RSI бычий")
-    elif indicators['stoch_rsi'] < 0: vs += weights['stoch_rsi']; reasons.append("Stoch RSI медвежий")
+        if indicators['ema9'] > indicators['ema21']:
+            vl += weights['adx']
+            reasons.append(f"ADX={indicators['adx']:.1f} (тренд вверх)")
+        else:
+            vs += weights['adx']
+            reasons.append(f"ADX={indicators['adx']:.1f} (тренд вниз)")
+    if indicators['ichimoku'] > 0:
+        vl += weights['ichimoku']
+        reasons.append("Ichimoku бычий")
+    elif indicators['ichimoku'] < 0:
+        vs += weights['ichimoku']
+        reasons.append("Ichimoku медвежий")
+    if indicators['supertrend'] > 0:
+        vl += weights['supertrend']
+        reasons.append("SuperTrend бычий")
+    elif indicators['supertrend'] < 0:
+        vs += weights['supertrend']
+        reasons.append("SuperTrend медвежий")
+    if indicators['vwap'] > 0:
+        vl += weights['vwap']
+        reasons.append("Цена выше VWAP")
+    elif indicators['vwap'] < 0:
+        vs += weights['vwap']
+        reasons.append("Цена ниже VWAP")
+    if indicators['hma'] > 0:
+        vl += weights['hma']
+        reasons.append("HMA бычий")
+    elif indicators['hma'] < 0:
+        vs += weights['hma']
+        reasons.append("HMA медвежий")
+    if indicators['stoch_rsi'] > 0:
+        vl += weights['stoch_rsi']
+        reasons.append("Stoch RSI бычий")
+    elif indicators['stoch_rsi'] < 0:
+        vs += weights['stoch_rsi']
+        reasons.append("Stoch RSI медвежий")
     p = indicators['patterns']
-    if p['engulfing'] == 1: vl += weights['engulfing']; reasons.append("Бычье поглощение")
-    elif p['engulfing'] == -1: vs += weights['engulfing']; reasons.append("Медвежье поглощение")
-    if p['hammer'] == 1: vl += weights['hammer']; reasons.append("Молот (бычий)")
-    elif p['hammer'] == -1: vs += weights['hammer']; reasons.append("Молот (медвежий)")
-    if p['doji'] == 1: vl += 0.5; vs += 0.5; reasons.append("Доджи")
-    if p['morning_star'] == 1: vl += weights['morning_star']; reasons.append("Утренняя звезда")
-    if p['evening_star'] == 1: vs += weights['evening_star']; reasons.append("Вечерняя звезда")
-    if p['hanging_man'] == -1: vs += weights['hanging_man']; reasons.append("Повешенный")
-    if p['shooting_star'] == -1: vs += weights['shooting_star']; reasons.append("Падающая звезда")
-    if p['double_bottom'] == 2: vl += weights['double_bottom'] * 1.2; reasons.append("Двойное дно (сильное)")
-    elif p['double_bottom'] == 1: vl += weights['double_bottom']; reasons.append("Двойное дно")
-    if p['double_top'] == -2: vs += weights['double_top'] * 1.2; reasons.append("Двойная вершина (сильная)")
-    elif p['double_top'] == -1: vs += weights['double_top']; reasons.append("Двойная вершина")
-    if p['head_shoulders'] == 2: vl += weights['head_shoulders'] * 1.2; reasons.append("Перевёрнутые голова и плечи")
-    elif p['head_shoulders'] == 1: vl += weights['head_shoulders']; reasons.append("Перевёрнутые голова и плечи")
-    elif p['head_shoulders'] == -2: vs += weights['head_shoulders'] * 1.2; reasons.append("Голова и плечи (сильные)")
-    elif p['head_shoulders'] == -1: vs += weights['head_shoulders']; reasons.append("Голова и плечи")
+    if p['engulfing'] == 1:
+        vl += weights['engulfing']
+        reasons.append("Бычье поглощение")
+    elif p['engulfing'] == -1:
+        vs += weights['engulfing']
+        reasons.append("Медвежье поглощение")
+    if p['hammer'] == 1:
+        vl += weights['hammer']
+        reasons.append("Молот (бычий)")
+    elif p['hammer'] == -1:
+        vs += weights['hammer']
+        reasons.append("Молот (медвежий)")
+    if p['doji'] == 1:
+        vl += 0.5
+        vs += 0.5
+        reasons.append("Доджи")
+    if p['morning_star'] == 1:
+        vl += weights['morning_star']
+        reasons.append("Утренняя звезда")
+    if p['evening_star'] == 1:
+        vs += weights['evening_star']
+        reasons.append("Вечерняя звезда")
+    if p['hanging_man'] == -1:
+        vs += weights['hanging_man']
+        reasons.append("Повешенный")
+    if p['shooting_star'] == -1:
+        vs += weights['shooting_star']
+        reasons.append("Падающая звезда")
+    if p['double_bottom'] == 2:
+        vl += weights['double_bottom'] * 1.2
+        reasons.append("Двойное дно (сильное)")
+    elif p['double_bottom'] == 1:
+        vl += weights['double_bottom']
+        reasons.append("Двойное дно")
+    if p['double_top'] == -2:
+        vs += weights['double_top'] * 1.2
+        reasons.append("Двойная вершина (сильная)")
+    elif p['double_top'] == -1:
+        vs += weights['double_top']
+        reasons.append("Двойная вершина")
+    if p['head_shoulders'] == 2:
+        vl += weights['head_shoulders'] * 1.2
+        reasons.append("Перевёрнутые голова и плечи")
+    elif p['head_shoulders'] == 1:
+        vl += weights['head_shoulders']
+        reasons.append("Перевёрнутые голова и плечи")
+    elif p['head_shoulders'] == -2:
+        vs += weights['head_shoulders'] * 1.2
+        reasons.append("Голова и плечи (сильные)")
+    elif p['head_shoulders'] == -1:
+        vs += weights['head_shoulders']
+        reasons.append("Голова и плечи")
     pivots = indicators['pivots']
     if pivots:
-        if last <= pivots['s1']: vl += 1; reasons.append(f"У поддержки S1")
-        elif last >= pivots['r1']: vs += 1; reasons.append(f"У сопротивления R1")
-        if last <= pivots['s2']: vl += 1.5; reasons.append(f"У сильной поддержки S2")
-        elif last >= pivots['r2']: vs += 1.5; reasons.append(f"У сильного сопротивления R2")
+        if last <= pivots['s1']:
+            vl += 1
+            reasons.append("У поддержки S1")
+        elif last >= pivots['r1']:
+            vs += 1
+            reasons.append("У сопротивления R1")
+        if last <= pivots['s2']:
+            vl += 1.5
+            reasons.append("У сильной поддержки S2")
+        elif last >= pivots['r2']:
+            vs += 1.5
+            reasons.append("У сильного сопротивления R2")
     vscore = indicators['volume_score']
     if vscore == 1:
-        if vl > vs: vl += 1; reasons.append("Объём подтверждает")
-        else: vs += 1; reasons.append("Объём подтверждает")
+        if vl > vs:
+            vl += 1
+            reasons.append("Объём подтверждает")
+        else:
+            vs += 1
+            reasons.append("Объём подтверждает")
     elif vscore == -1:
-        if vl > vs: vs += 1; reasons.append("Низкий объём")
-        else: vl += 1; reasons.append("Низкий объём")
-    if indicators['session'] == "ASIA": reasons.append("Азиатская сессия")
-    elif indicators['session'] == "LONDON": reasons.append("Лондонская сессия")
-    elif indicators['session'] == "NEW_YORK": reasons.append("Нью-Йоркская сессия")
-    if vl > vs and vl >= 5: signal = 'LONG'; final_reason = f"Бычий перевес ({vl:.1f} vs {vs:.1f}). " + ", ".join(reasons)
-    elif vs > vl and vs >= 5: signal = 'SHORT'; final_reason = f"Медвежий перевес ({vs:.1f} vs {vl:.1f}). " + ", ".join(reasons)
-    else: signal = 'HOLD'; final_reason = f"Нет явного перевеса ({vl:.1f}L, {vs:.1f}S). " + ", ".join(reasons)
+        if vl > vs:
+            vs += 1
+            reasons.append("Низкий объём")
+        else:
+            vl += 1
+            reasons.append("Низкий объём")
+    if indicators['session'] == "ASIA":
+        reasons.append("Азиатская сессия")
+    elif indicators['session'] == "LONDON":
+        reasons.append("Лондонская сессия")
+    elif indicators['session'] == "NEW_YORK":
+        reasons.append("Нью-Йоркская сессия")
+    if vl > vs and vl >= 5:
+        signal = 'LONG'
+        final_reason = f"Бычий перевес ({vl:.1f} vs {vs:.1f}). " + ", ".join(reasons)
+    elif vs > vl and vs >= 5:
+        signal = 'SHORT'
+        final_reason = f"Медвежий перевес ({vs:.1f} vs {vl:.1f}). " + ", ".join(reasons)
+    else:
+        signal = 'HOLD'
+        final_reason = f"Нет явного перевеса ({vl:.1f}L, {vs:.1f}S). " + ", ".join(reasons)
     return signal, final_reason
 
 async def get_multi_timeframe_alignment(asset, primary_tf):
     tf_list = ['1h', '4h']
     signals = []
     for tf in tf_list:
-        if tf == primary_tf: continue
+        if tf == primary_tf:
+            continue
         try:
             df = await get_market_data_async(asset, tf, limit=200)
             if df is not None and not df.empty:
                 ind = compute_advanced_indicators(df)
                 sig, _ = get_weighted_signal(ind)
                 signals.append(sig)
-            else: signals.append('HOLD')
-        except: signals.append('HOLD')
+            else:
+                signals.append('HOLD')
+        except:
+            signals.append('HOLD')
     return signals.count('LONG'), signals.count('SHORT')
 
 def calculate_risk_parameters(df, entry_price):
     try:
         atr = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], 14).average_true_range().iloc[-1]
-        if pd.isna(atr) or atr == 0: atr = df['close'].iloc[-1] * 0.01
+        if pd.isna(atr) or atr == 0:
+            atr = df['close'].iloc[-1] * 0.01
         return {'stop_loss': entry_price - 2*atr, 'take_profit': entry_price + 3*atr, 'atr': atr}
     except:
         return {'stop_loss': entry_price * 0.98, 'take_profit': entry_price * 1.03, 'atr': entry_price * 0.01}
@@ -802,27 +987,48 @@ async def generate_signal(asset, duration, user_id=None):
     primary_signal, reason = get_weighted_signal(ind, timeframe)
     long_tf, short_tf = await get_multi_timeframe_alignment(clean_asset, timeframe)
     tf_boost = 0
-    if primary_signal == 'LONG' and long_tf >= 2: tf_boost = 1
-    elif primary_signal == 'SHORT' and short_tf >= 2: tf_boost = 1
-    elif primary_signal == 'LONG' and short_tf >= 2: tf_boost = -1
-    elif primary_signal == 'SHORT' and long_tf >= 2: tf_boost = -1
+    if primary_signal == 'LONG' and long_tf >= 2:
+        tf_boost = 1
+    elif primary_signal == 'SHORT' and short_tf >= 2:
+        tf_boost = 1
+    elif primary_signal == 'LONG' and short_tf >= 2:
+        tf_boost = -1
+    elif primary_signal == 'SHORT' and long_tf >= 2:
+        tf_boost = -1
     if primary_signal == 'HOLD':
-        final_signal = 'HOLD'; strength = 'WEAK'; emoji = '⚪'
+        final_signal = 'HOLD'
+        strength = 'WEAK'
+        emoji = '⚪'
     else:
-        if tf_boost == 1: strength = 'STRONG'; final_signal = primary_signal
-        elif tf_boost == -1: strength = 'WEAK'; final_signal = 'HOLD'
-        else: strength = 'MEDIUM'; final_signal = primary_signal
-        if final_signal == 'LONG' and strength == 'STRONG': emoji = '🟢'
-        elif final_signal == 'LONG' and strength == 'MEDIUM': emoji = '🟡'
-        elif final_signal == 'LONG' and strength == 'WEAK': emoji = '🟠'
-        elif final_signal == 'SHORT' and strength == 'STRONG': emoji = '🔴'
-        elif final_signal == 'SHORT' and strength == 'MEDIUM': emoji = '🟠'
-        elif final_signal == 'SHORT' and strength == 'WEAK': emoji = '🟡'
-        else: emoji = '⚪'
+        if tf_boost == 1:
+            strength = 'STRONG'
+            final_signal = primary_signal
+        elif tf_boost == -1:
+            strength = 'WEAK'
+            final_signal = 'HOLD'
+        else:
+            strength = 'MEDIUM'
+            final_signal = primary_signal
+        if final_signal == 'LONG' and strength == 'STRONG':
+            emoji = '🟢'
+        elif final_signal == 'LONG' and strength == 'MEDIUM':
+            emoji = '🟡'
+        elif final_signal == 'LONG' and strength == 'WEAK':
+            emoji = '🟠'
+        elif final_signal == 'SHORT' and strength == 'STRONG':
+            emoji = '🔴'
+        elif final_signal == 'SHORT' and strength == 'MEDIUM':
+            emoji = '🟠'
+        elif final_signal == 'SHORT' and strength == 'WEAK':
+            emoji = '🟡'
+        else:
+            emoji = '⚪'
     risk = calculate_risk_parameters(df, float(ind['last_close']))
     full_reason = f"{reason}\nТаймфрейм: {timeframe} (авто), свечей: {len(df)}\nМульти-ТФ: {long_tf} LONG, {short_tf} SHORT на 1H/4H"
-    if tf_boost == 1: full_reason += " → усиление"
-    elif tf_boost == -1: full_reason += " → противоречие, ослаблен"
+    if tf_boost == 1:
+        full_reason += " → усиление"
+    elif tf_boost == -1:
+        full_reason += " → противоречие, ослаблен"
     signal_id = None
     if user_id and final_signal in ('LONG', 'SHORT'):
         signal_id = save_signal(user_id, clean_asset, final_signal, timeframe, duration, float(ind['last_close']), strength)
@@ -837,7 +1043,8 @@ async def check_periodic_reports():
     while True:
         await asyncio.sleep(600)
         try:
-            if not DATABASE_URL or not PSYCOPG_OK: continue
+            if not DATABASE_URL or not PSYCOPG_OK:
+                continue
             conn = get_db()
             cur = conn.cursor()
             cur.execute("SELECT * FROM user_cycles")
@@ -876,12 +1083,17 @@ INDICES = ["S&P 500 OTC","NASDAQ OTC","Dow Jones OTC","Nikkei 225 OTC"]
 DURATIONS = ["5s","10s","15s","30s","1m","2m","3m","4m","5m","6m","8m","10m","15m","20m","25m","30m","45m","1h","2h","3h","4h"]
 
 def build_keyboard(items, back=False, back_data=None, cols=2):
-    keyboard = []; row = []
+    keyboard = []
+    row = []
     for item in items:
         row.append(InlineKeyboardButton(item, callback_data=item))
-        if len(row) == cols: keyboard.append(row); row = []
-    if row: keyboard.append(row)
-    if back: keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data=back_data or "back")])
+        if len(row) == cols:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    if back:
+        keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data=back_data or "back")])
     return InlineKeyboardMarkup(keyboard)
 
 def build_main_menu():
@@ -908,19 +1120,27 @@ async def go(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     try:
         await query.message.delete()
-    except: pass
+    except:
+        pass
     await update.effective_chat.send_message("Выберите раздел:", reply_markup=build_main_menu())
 
 async def section_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     section = query.data
-    if section == "currencies": items, title = CURRENCIES, "💱 Валютные пары"
-    elif section == "crypto": items, title = CRYPTO, "🪙 Криптовалюты"
-    elif section == "commodities": items, title = COMMODITIES, "🛢️ Сырьевые товары"
-    elif section == "stocks": items, title = STOCKS, "📈 Акции"
-    elif section == "indices": items, title = INDICES, "📊 Индексы"
-    else: await query.edit_message_text("Ошибка"); return
+    if section == "currencies":
+        items, title = CURRENCIES, "💱 Валютные пары"
+    elif section == "crypto":
+        items, title = CRYPTO, "🪙 Криптовалюты"
+    elif section == "commodities":
+        items, title = COMMODITIES, "🛢️ Сырьевые товары"
+    elif section == "stocks":
+        items, title = STOCKS, "📈 Акции"
+    elif section == "indices":
+        items, title = INDICES, "📊 Индексы"
+    else:
+        await query.edit_message_text("Ошибка")
+        return
     keyboard = build_keyboard(items, back=True, back_data="go")
     await query.edit_message_text(f"{title} (выберите актив):", reply_markup=keyboard)
 
@@ -928,7 +1148,8 @@ async def asset_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     asset = query.data
-    if asset in ['go', 'currencies', 'crypto', 'commodities', 'stocks', 'indices', 'my_trades']: return
+    if asset in ['go', 'currencies', 'crypto', 'commodities', 'stocks', 'indices', 'my_trades']:
+        return
     context.user_data['asset'] = asset
     icon = ASSET_ICONS.get(asset, "")
     text = f"{icon} *{asset}*\n\nВыберите время сделки:"
@@ -936,20 +1157,24 @@ async def asset_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
     except Exception as e:
-        if "Message is not modified" not in str(e): raise
+        if "Message is not modified" not in str(e):
+            raise
 
 async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if context.user_data.get('processing', False):
-        await query.answer("⏳ Уже идёт анализ..."); return
+        await query.answer("⏳ Уже идёт анализ...")
+        return
     context.user_data['processing'] = True
     try:
         await query.answer()
         duration = query.data
-        if duration in ['back_to_asset', 'back_to_section', 'go', 'home']: return
+        if duration in ['back_to_asset', 'back_to_section', 'go', 'home']:
+            return
         asset = context.user_data.get('asset')
         if not asset or asset in ['back_to_asset', 'back_to_section', 'go', 'home']:
-            await query.edit_message_text("⚠️ Выберите актив заново."); return
+            await query.edit_message_text("⚠️ Выберите актив заново.")
+            return
         context.user_data['duration'] = duration
         icon = ASSET_ICONS.get(asset, "")
         await query.edit_message_text(f"{icon} ⏳ Анализирую рынок...")
@@ -969,9 +1194,14 @@ async def duration_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['processing'] = False
 
 async def send_signal_result(update, context, result, asset, duration, icon):
-    signal = result['signal']; strength = result['strength']; emoji = result['emoji']
-    reason = result['reason']; ind = result['indicators']; risk = result['risk']
-    price = ind['last_close']; tf = result['timeframe']
+    signal = result['signal']
+    strength = result['strength']
+    emoji = result['emoji']
+    reason = result['reason']
+    ind = result['indicators']
+    risk = result['risk']
+    price = ind['last_close']
+    tf = result['timeframe']
     signal_id = result.get('signal_id')
     msg = (f"{emoji} *{signal}* ({strength})\n"
            f"{icon} Актив: {asset}\n"
@@ -994,7 +1224,6 @@ async def send_signal_result(update, context, result, asset, duration, icon):
            f"Take-Profit: {risk['take_profit']:.4f}\n"
            f"ATR: {risk['atr']:.4f}\n\n"
            f"ℹ️ {reason}")
-    # Пометка про OTC
     if "OTC" in asset:
         msg += "\n\n⚠️ _Цены Pocket Option (OTC) могут отличаться от реального рынка._"
 
@@ -1016,7 +1245,8 @@ async def send_signal_result(update, context, result, asset, duration, icon):
     image_url = SIGNAL_IMAGES.get(signal, SIGNAL_IMAGES['HOLD'])
     try:
         await update.callback_query.message.delete()
-    except: pass
+    except:
+        pass
     await update.effective_chat.send_photo(photo=image_url, caption=msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
 
 # ==================== ОЦЕНКА СИГНАЛА ====================
@@ -1045,13 +1275,13 @@ async def handle_rating(update, context, result_type):
     if not rate_signal(signal_id, result_type):
         await query.answer("Ошибка записи. Попробуйте позже.", show_alert=True)
         return
-    # Убираем кнопки оценки, оставляем навигацию
     try:
         await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("🔄 Дай сигнал ещё раз", callback_data="resignal")],
             [InlineKeyboardButton("🏠 Назад в меню", callback_data="home")]
         ]))
-    except: pass
+    except:
+        pass
     context.user_data['last_signal_id'] = None
     if result_type == 'WIN':
         await query.answer("Победа записана! 🎉", show_alert=True)
@@ -1072,7 +1302,6 @@ async def rate_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==================== RESIGNAL / BACK ====================
 async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    # Проверяем, оценён ли последний сигнал
     last_id = context.user_data.get('last_signal_id')
     if last_id:
         row = get_signal(last_id)
@@ -1084,18 +1313,21 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("Вы не оценили сигнал 😔 Оцените его перед следующим.", show_alert=True)
                 return
     if context.user_data.get('processing', False):
-        await query.answer("⏳ Уже идёт анализ..."); return
+        await query.answer("⏳ Уже идёт анализ...")
+        return
     context.user_data['processing'] = True
     try:
         await query.answer()
         asset = context.user_data.get('asset')
         duration = context.user_data.get('duration')
         if not asset or not duration:
-            await query.edit_message_text("Ошибка: начните заново /start"); return
+            await query.edit_message_text("Ошибка: начните заново /start")
+            return
         icon = ASSET_ICONS.get(asset, "")
         try:
             await query.message.delete()
-        except: pass
+        except:
+            pass
         temp_msg = await update.effective_chat.send_message(f"{icon} ⏳ Анализирую рынок...")
         clean_asset = asset.replace(" OTC", "").replace("/", "").strip()
         user_id = update.effective_user.id
@@ -1103,7 +1335,8 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_signal_result(update, context, result, asset, duration, icon)
         try:
             await temp_msg.delete()
-        except: pass
+        except:
+            pass
     except asyncio.TimeoutError:
         await update.effective_chat.send_message("⏰ Превышено время.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Назад", callback_data="home")]]))
     except Exception as e:
@@ -1115,7 +1348,6 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     back_to = query.data
-    # Если пользователь уходит, но последний сигнал не оценён (и уже можно оценить)
     if back_to in ('back_to_section', 'back_to_asset', 'go', 'home'):
         last_id = context.user_data.get('last_signal_id')
         if last_id:
@@ -1128,24 +1360,26 @@ async def back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await query.answer("Вы не оценили сигнал 😔", show_alert=True)
                     return
     await query.answer()
-    if back_to == "back_to_section": await go(update, context)
+    if back_to == "back_to_section":
+        await go(update, context)
     elif back_to == "back_to_asset":
         asset = context.user_data.get('asset')
-        if asset: await asset_selected(update, context)
-        else: await go(update, context)
-    else: await go(update, context)
+        if asset:
+            await asset_selected(update, context)
+        else:
+            await go(update, context)
+    else:
+        await go(update, context)
 
 # ==================== МОИ СДЕЛКИ ====================
 async def my_trades_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
-
     if not DATABASE_URL or not PSYCOPG_OK:
         await query.edit_message_text("⚠️ Статистика временно недоступна.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="go")]]))
         return
-
     cycle = get_user_cycle(user_id)
     if cycle is None:
         text = (
@@ -1162,14 +1396,12 @@ async def my_trades_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="go")]]))
         return
-
     now = datetime.now(timezone.utc)
     first = cycle['first_signal_at']
     lines = ["📊 *Мои сделки ✅👾🏆*", "",
              "Этот раздел показывает статистику ваших сделок.",
              "Бот автоматически присылает отчёты по расписанию.",
              ""]
-
     buttons = []
     for period, label, col in [
         (10, "10 дней", 'last_sent_10_at'),
@@ -1193,10 +1425,8 @@ async def my_trades_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             stats = get_user_stats(user_id, period)
             if (stats['overall']['total'] or 0) > 0:
                 buttons.append([InlineKeyboardButton(f"📊 Статистика за {label} (текущая)", callback_data=f"report_{period}")])
-
     lines.append("")
     lines.append(f"📅 Первый сигнал: {first.strftime('%d.%m.%Y %H:%M')}")
-
     buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="go")])
     text = "\n".join(lines)
     await query.edit_message_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(buttons))
@@ -1252,7 +1482,6 @@ async def setup_webhook():
     await application.bot.set_webhook(url=f"{RENDER_URL}/telegram")
     logger.info(f"Webhook установлен: {RENDER_URL}/telegram")
     init_db()
-    # Авто-проверка WIN/LOSS ОТКЛЮЧЕНА. Оставляем только авто-отправку отчётов.
     asyncio.create_task(check_periodic_reports())
 
 def start_loop(loop):
