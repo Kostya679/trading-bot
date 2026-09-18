@@ -135,7 +135,6 @@ CRYPTO_LIST = ['BTC', 'ETH', 'LTC', 'XRP', 'SOL', 'ADA', 'DOT', 'LINK', 'BNB']
 
 def get_yfinance_symbol(symbol):
     norm = symbol.replace(" ", "").upper()
-    # КРИПТА в Yahoo: BTC-USD, ETH-USD и т.д.
     for c in CRYPTO_LIST:
         if norm == c + 'USD' or norm == c + 'USDT':
             return c + '-USD'
@@ -1360,12 +1359,6 @@ async def handle_rating(update, context, result_type):
         await query.answer("Ошибка записи. Попробуйте позже.", show_alert=True)
         return
     context.user_data['last_signal_id'] = None
-    if result_type == 'WIN':
-        await query.answer("Победа записана! 🎉", show_alert=True)
-    elif result_type == 'LOSS':
-        await query.answer("Убыток записан. В следующий раз повезёт! 💪", show_alert=True)
-    else:
-        await query.answer("Спасибо, пропуск учтён 😚", show_alert=True)
     try:
         await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("🔄 Дай сигнал ещё раз", callback_data="resignal")],
@@ -1373,6 +1366,12 @@ async def handle_rating(update, context, result_type):
         ]))
     except Exception as e:
         logger.warning(f"edit_message_reply_markup error: {e}")
+    if result_type == 'WIN':
+        await query.answer("Победа записана! 🎉", show_alert=True)
+    elif result_type == 'LOSS':
+        await query.answer("Убыток записан. В следующий раз повезёт! 💪", show_alert=True)
+    else:
+        await query.answer("Спасибо, пропуск учтён 😚", show_alert=True)
 
 async def rate_win(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await handle_rating(update, context, 'WIN')
@@ -1393,9 +1392,12 @@ async def resignal(update: Update, context: ContextTypes.DEFAULT_TYPE):
             check_at = row['check_at']
             if check_at.tzinfo is None:
                 check_at = check_at.replace(tzinfo=timezone.utc)
-            if datetime.now(timezone.utc) >= check_at:
+            now = datetime.now(timezone.utc)
+            if now < check_at:
+                await query.answer("Дождитесь окончания сделки и оцените сигнал ⏰", show_alert=True)
+            else:
                 await query.answer("Вы не оценили сигнал 😔 Оцените его перед следующим.", show_alert=True)
-                return
+            return
     if context.user_data.get('processing', False):
         await query.answer("⏳ Уже идёт анализ...")
         return
@@ -1453,9 +1455,12 @@ async def back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 check_at = row['check_at']
                 if check_at.tzinfo is None:
                     check_at = check_at.replace(tzinfo=timezone.utc)
-                if datetime.now(timezone.utc) >= check_at:
-                    await query.answer("Вы не оценили сигнал 😔", show_alert=True)
-                    return
+                now = datetime.now(timezone.utc)
+                if now < check_at:
+                    await query.answer("Дождитесь окончания сделки и оцените сигнал ⏰", show_alert=True)
+                else:
+                    await query.answer("Вы не оценили сигнал 😔 Оцените его перед тем как продолжить", show_alert=True)
+                return
     await query.answer()
     if back_to == "back_to_section":
         await go(update, context)
