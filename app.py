@@ -414,7 +414,7 @@ def build_report_text(user_id, days, period_label):
         text = text[:4000] + "\n..."
     return text
 
-# ==================== ПАТТЕРНЫ ====================
+# ==================== ПАТТЕРНЫ (СВЕЧИ) — 10 базовых ====================
 def detect_candle_patterns(df):
     if len(df) < 2:
         return {'engulfing': 0, 'hammer': 0, 'doji': 0}
@@ -587,6 +587,406 @@ def get_session(time_utc):
     elif 14 <= hour < 22:
         return "NEW_YORK"
     return "OVERLAP"
+
+# ==================== 30 ДОПОЛНИТЕЛЬНЫХ ПАТТЕРНОВ ====================
+def _find_peaks(arr, order=5):
+    peaks = []
+    for i in range(order, len(arr) - order):
+        if arr[i] == max(arr[i - order:i + order + 1]):
+            peaks.append(i)
+    if not peaks: return peaks
+    filtered = [peaks[0]]
+    for p in peaks[1:]:
+        if p - filtered[-1] >= order: filtered.append(p)
+    return filtered
+
+def _find_valleys(arr, order=5):
+    valleys = []
+    for i in range(order, len(arr) - order):
+        if arr[i] == min(arr[i - order:i + order + 1]):
+            valleys.append(i)
+    if not valleys: return valleys
+    filtered = [valleys[0]]
+    for v in valleys[1:]:
+        if v - filtered[-1] >= order: filtered.append(v)
+    return filtered
+
+def _fit_line(y):
+    if len(y) < 2: return 0
+    x = np.arange(len(y))
+    slope = np.polyfit(x, y, 1)[0]
+    avg = np.mean(y)
+    return slope / avg if avg != 0 else 0
+
+def _is_parallel(s1, s2, tol=0.001): return abs(s1 - s2) < tol
+
+def _similar(v1, v2, tol=0.03):
+    if v1 == 0 or v2 == 0: return False
+    return abs(v1 - v2) / max(abs(v1), abs(v2)) < tol
+
+def pat_triple_top(df, lb=50):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    peaks = _find_peaks(d['high'].values, 4)
+    if len(peaks) < 3: return None
+    p1, p2, p3 = peaks[-3], peaks[-2], peaks[-1]
+    h = d['high'].values
+    if not (_similar(h[p1], h[p2], 0.025) and _similar(h[p2], h[p3], 0.025)): return None
+    neck = min(d['low'].iloc[p1:p3].values)
+    if d['close'].iloc[-1] < neck:
+        return {'name': 'Тройная вершина', 'direction': 'SHORT', 'strength': 2}
+    return None
+
+def pat_triple_bottom(df, lb=50):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    vs = _find_valleys(d['low'].values, 4)
+    if len(vs) < 3: return None
+    v1, v2, v3 = vs[-3], vs[-2], vs[-1]
+    l = d['low'].values
+    if not (_similar(l[v1], l[v2], 0.025) and _similar(l[v2], l[v3], 0.025)): return None
+    neck = max(d['high'].iloc[v1:v3].values)
+    if d['close'].iloc[-1] > neck:
+        return {'name': 'Тройное дно', 'direction': 'LONG', 'strength': 2}
+    return None
+
+def pat_inv_head_shoulders(df, lb=50):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    vs = _find_valleys(d['low'].values, 4)
+    if len(vs) < 3: return None
+    v1, v2, v3 = vs[-3], vs[-2], vs[-1]
+    l = d['low'].values
+    if l[v2] < l[v1] and l[v2] < l[v3] and _similar(l[v1], l[v3], 0.03):
+        neck = max(d['high'].iloc[v1:v3].values)
+        if d['close'].iloc[-1] > neck:
+            st = 2 if d['volume'].iloc[-1] > d['volume'].iloc[-20:].mean() * 1.2 else 1
+            return {'name': 'Перевёрнутые голова и плечи', 'direction': 'LONG', 'strength': st}
+    return None
+
+def pat_diamond_bottom(df, lb=40):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    h = d['high'].values; l = d['low'].values
+    mid = len(h) // 2
+    r_early = max(h[:mid]) - min(l[:mid])
+    r_late = max(h[mid:]) - min(l[mid:])
+    if r_early < r_late: return None
+    if d['close'].iloc[-1] > d['high'].iloc[mid:].mean():
+        return {'name': 'Ромб (дно)', 'direction': 'LONG', 'strength': 2}
+    return None
+
+def pat_bull_flag(df, lb=30):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    imp = d.iloc[:10]; cons = d.iloc[10:]
+    if imp['close'].iloc[-1] < imp['close'].iloc[0] * 1.015: return None
+    if cons['close'].iloc[-1] > cons['close'].iloc[0]: return None
+    if cons['high'].max() < imp['high'].max():
+        if d['close'].iloc[-1] > cons['high'].max():
+            return {'name': 'Бычий флаг', 'direction': 'LONG', 'strength': 2}
+        return {'name': 'Формируется бычий флаг', 'direction': 'LONG', 'strength': 1}
+    return None
+
+def pat_bear_flag(df, lb=30):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    imp = d.iloc[:10]; cons = d.iloc[10:]
+    if imp['close'].iloc[-1] > imp['close'].iloc[0] * 0.985: return None
+    if cons['close'].iloc[-1] < cons['close'].iloc[0]: return None
+    if cons['low'].min() > imp['low'].min():
+        if d['close'].iloc[-1] < cons['low'].min():
+            return {'name': 'Медвежий флаг', 'direction': 'SHORT', 'strength': 2}
+        return {'name': 'Формируется медвежий флаг', 'direction': 'SHORT', 'strength': 1}
+    return None
+
+def pat_bull_pennant(df, lb=25):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    imp = d.iloc[:8]
+    if imp['close'].iloc[-1] < imp['close'].iloc[0] * 1.02: return None
+    cons = d.iloc[8:]
+    h = cons['high'].values; l = cons['low'].values
+    if _fit_line(h) < 0 and _fit_line(l) > 0:
+        if d['close'].iloc[-1] > max(h):
+            return {'name': 'Бычий вымпел', 'direction': 'LONG', 'strength': 2}
+    return None
+
+def pat_bear_pennant(df, lb=25):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    imp = d.iloc[:8]
+    if imp['close'].iloc[-1] > imp['close'].iloc[0] * 0.98: return None
+    cons = d.iloc[8:]
+    h = cons['high'].values; l = cons['low'].values
+    if _fit_line(h) < 0 and _fit_line(l) > 0:
+        if d['close'].iloc[-1] < min(l):
+            return {'name': 'Медвежий вымпел', 'direction': 'SHORT', 'strength': 2}
+    return None
+
+def pat_asc_triangle(df, lb=40):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    h = d['high'].values; l = d['low'].values
+    sh = _fit_line(h); sl = _fit_line(l)
+    if abs(sh) < 0.0008 and sl > 0.001:
+        if d['close'].iloc[-1] > max(h) * 0.999:
+            return {'name': 'Восходящий треугольник', 'direction': 'LONG', 'strength': 2}
+        return {'name': 'Восходящий треугольник (формируется)', 'direction': 'LONG', 'strength': 1}
+    return None
+
+def pat_desc_triangle(df, lb=40):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    h = d['high'].values; l = d['low'].values
+    sh = _fit_line(h); sl = _fit_line(l)
+    if abs(sl) < 0.0008 and sh < -0.001:
+        if d['close'].iloc[-1] < min(l) * 1.001:
+            return {'name': 'Нисходящий треугольник', 'direction': 'SHORT', 'strength': 2}
+        return {'name': 'Нисходящий треугольник (формируется)', 'direction': 'SHORT', 'strength': 1}
+    return None
+
+def pat_sym_triangle(df, lb=40):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    h = d['high'].values; l = d['low'].values
+    sh = _fit_line(h); sl = _fit_line(l)
+    if sh < -0.0008 and sl > 0.0008:
+        if d['close'].iloc[-1] > max(h[-5:]):
+            return {'name': 'Симметричный треугольник (пробой вверх)', 'direction': 'LONG', 'strength': 2}
+        if d['close'].iloc[-1] < min(l[-5:]):
+            return {'name': 'Симметричный треугольник (пробой вниз)', 'direction': 'SHORT', 'strength': 2}
+        return {'name': 'Симметричный треугольник', 'direction': 'HOLD', 'strength': 1}
+    return None
+
+def pat_expand_triangle(df, lb=40):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    h = d['high'].values; l = d['low'].values
+    sh = _fit_line(h); sl = _fit_line(l)
+    if sh > 0.001 and sl < -0.001:
+        if d['close'].iloc[-1] > d['close'].iloc[-5]:
+            return {'name': 'Расширяющийся треугольник (LONG)', 'direction': 'LONG', 'strength': 1}
+        else:
+            return {'name': 'Расширяющийся треугольник (SHORT)', 'direction': 'SHORT', 'strength': 1}
+    return None
+
+def pat_rise_wedge(df, lb=40):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    h = d['high'].values; l = d['low'].values
+    sh = _fit_line(h); sl = _fit_line(l)
+    if sh > 0.0005 and sl > sh + 0.0005:
+        if d['close'].iloc[-1] < min(l[-5:]):
+            return {'name': 'Восходящий клин (медвежий)', 'direction': 'SHORT', 'strength': 2}
+        return {'name': 'Восходящий клин (формируется)', 'direction': 'SHORT', 'strength': 1}
+    return None
+
+def pat_fall_wedge(df, lb=40):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    h = d['high'].values; l = d['low'].values
+    sh = _fit_line(h); sl = _fit_line(l)
+    if sl < -0.0005 and sh < sl - 0.0005:
+        if d['close'].iloc[-1] > max(h[-5:]):
+            return {'name': 'Нисходящий клин (бычий)', 'direction': 'LONG', 'strength': 2}
+        return {'name': 'Нисходящий клин (формируется)', 'direction': 'LONG', 'strength': 1}
+    return None
+
+def pat_bull_channel(df, lb=40):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    h = d['high'].values; l = d['low'].values
+    sh = _fit_line(h); sl = _fit_line(l)
+    if sh > 0.0005 and sl > 0.0005 and _is_parallel(sh, sl, 0.001):
+        return {'name': 'Бычий канал', 'direction': 'LONG', 'strength': 1}
+    return None
+
+def pat_bear_channel(df, lb=40):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    h = d['high'].values; l = d['low'].values
+    sh = _fit_line(h); sl = _fit_line(l)
+    if sh < -0.0005 and sl < -0.0005 and _is_parallel(sh, sl, 0.001):
+        return {'name': 'Медвежий канал', 'direction': 'SHORT', 'strength': 1}
+    return None
+
+def pat_bull_rectangle(df, lb=40):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    h = d['high'].values; l = d['low'].values
+    if abs(_fit_line(h)) < 0.0006 and abs(_fit_line(l)) < 0.0006:
+        if d['close'].iloc[-1] > max(h) * 0.999:
+            return {'name': 'Бычий прямоугольник (пробой вверх)', 'direction': 'LONG', 'strength': 2}
+        return {'name': 'Прямоугольник (range)', 'direction': 'HOLD', 'strength': 1}
+    return None
+
+def pat_bear_rectangle(df, lb=40):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    h = d['high'].values; l = d['low'].values
+    if abs(_fit_line(h)) < 0.0006 and abs(_fit_line(l)) < 0.0006:
+        if d['close'].iloc[-1] < min(l) * 1.001:
+            return {'name': 'Медвежий прямоугольник (пробой вниз)', 'direction': 'SHORT', 'strength': 2}
+    return None
+
+def pat_cup_handle(df, lb=60):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    c = d['close'].values
+    mid = len(c) // 2
+    left_low = c[:10].min()
+    mid_low = c[mid-5:mid+5].min()
+    right_high = c[mid+5:].max()
+    if mid_low < left_low and right_high > mid_low * 1.02:
+        if c[-1] > c[-5] and c[-1] < right_high:
+            return {'name': 'Чашка с ручкой', 'direction': 'LONG', 'strength': 2}
+    return None
+
+def pat_inv_cup_handle(df, lb=60):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    c = d['close'].values
+    mid = len(c) // 2
+    left_high = c[:10].max()
+    mid_high = c[mid-5:mid+5].max()
+    right_low = c[mid+5:].min()
+    if mid_high > left_high and right_low < mid_high * 0.98:
+        if c[-1] < c[-5] and c[-1] > right_low:
+            return {'name': 'Перевёрнутая чашка с ручкой', 'direction': 'SHORT', 'strength': 2}
+    return None
+
+def pat_asc_scallop(df, lb=40):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    c = d['close'].values
+    if _fit_line(c) > 0.0008:
+        drops = sum(1 for i in range(1, len(c)) if c[i] < c[i-1])
+        if drops < len(c) * 0.4:
+            return {'name': 'Восходящее скалопирование', 'direction': 'LONG', 'strength': 1}
+    return None
+
+def pat_desc_scallop(df, lb=40):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    c = d['close'].values
+    if _fit_line(c) < -0.0008:
+        rises = sum(1 for i in range(1, len(c)) if c[i] > c[i-1])
+        if rises < len(c) * 0.4:
+            return {'name': 'Нисходящее скалопирование', 'direction': 'SHORT', 'strength': 1}
+    return None
+
+def pat_measured_up(df, lb=40):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    c = d['close'].values
+    imp1 = c[10] - c[0]; cur = c[-1] - c[20]
+    if imp1 > 0 and cur > 0 and abs(imp1 - cur) / imp1 < 0.3:
+        return {'name': 'Measured Move Up', 'direction': 'LONG', 'strength': 2}
+    return None
+
+def pat_measured_down(df, lb=40):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    c = d['close'].values
+    imp1 = c[10] - c[0]; cur = c[-1] - c[20]
+    if imp1 < 0 and cur < 0 and abs(imp1 - cur) / abs(imp1) < 0.3:
+        return {'name': 'Measured Move Down', 'direction': 'SHORT', 'strength': 2}
+    return None
+
+def pat_bull_trend(df, lb=40):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    if _fit_line(d['close'].values) > 0.0015:
+        return {'name': 'Бычий тренд', 'direction': 'LONG', 'strength': 1}
+    return None
+
+def pat_bear_trend(df, lb=40):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    if _fit_line(d['close'].values) < -0.0015:
+        return {'name': 'Медвежий тренд', 'direction': 'SHORT', 'strength': 1}
+    return None
+
+def pat_rounding_bottom(df, lb=60):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    c = d['close'].values
+    mid = len(c) // 2
+    if c[mid] < c[0] and c[mid] < c[-1] and c[-1] > c[0] * 0.98:
+        if abs(c[0] - c[-1]) / c[0] < 0.05:
+            return {'name': 'Rounding Bottom', 'direction': 'LONG', 'strength': 2}
+    return None
+
+def pat_v_bottom(df, lb=20):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    c = d['close'].values
+    min_pos = int(np.argmin(c))
+    if 3 <= min_pos <= len(c) - 4:
+        if c[min_pos] < c[0] * 0.98 and c[-1] > c[min_pos] * 1.02:
+            return {'name': 'V-образное дно', 'direction': 'LONG', 'strength': 2}
+    return None
+
+def pat_v_top(df, lb=20):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    c = d['close'].values
+    max_pos = int(np.argmax(c))
+    if 3 <= max_pos <= len(c) - 4:
+        if c[max_pos] > c[0] * 1.02 and c[-1] < c[max_pos] * 0.98:
+            return {'name': 'V-образная вершина', 'direction': 'SHORT', 'strength': 2}
+    return None
+
+def pat_three_drives(df, lb=50):
+    if len(df) < lb: return None
+    d = df.iloc[-lb:]
+    h = d['high'].values
+    l = d['low'].values
+    peaks = _find_peaks(h, 4)
+    if len(peaks) >= 3:
+        p1, p2, p3 = peaks[-3], peaks[-2], peaks[-1]
+        if h[p1] < h[p2] < h[p3]:
+            if _similar(h[p2] - h[p1], h[p3] - h[p2], 0.3):
+                return {'name': 'Three Drives (медвежий)', 'direction': 'SHORT', 'strength': 2}
+    valleys = _find_valleys(l, 4)
+    if len(valleys) >= 3:
+        v1, v2, v3 = valleys[-3], valleys[-2], valleys[-1]
+        if l[v1] > l[v2] > l[v3]:
+            if _similar(l[v1] - l[v2], l[v2] - l[v3], 0.3):
+                return {'name': 'Three Drives (бычий)', 'direction': 'LONG', 'strength': 2}
+    return None
+
+ALL_PATTERNS = [
+    pat_triple_top, pat_triple_bottom, pat_inv_head_shoulders, pat_diamond_bottom,
+    pat_bull_flag, pat_bear_flag, pat_bull_pennant, pat_bear_pennant,
+    pat_asc_triangle, pat_desc_triangle, pat_sym_triangle, pat_expand_triangle,
+    pat_rise_wedge, pat_fall_wedge,
+    pat_bull_channel, pat_bear_channel,
+    pat_bull_rectangle, pat_bear_rectangle,
+    pat_cup_handle, pat_inv_cup_handle,
+    pat_asc_scallop, pat_desc_scallop,
+    pat_measured_up, pat_measured_down,
+    pat_bull_trend, pat_bear_trend,
+    pat_rounding_bottom, pat_v_bottom, pat_v_top,
+    pat_three_drives,
+]
+
+def detect_all_patterns(df):
+    long_votes = 0.0
+    short_votes = 0.0
+    found = []
+    for detector in ALL_PATTERNS:
+        try:
+            result = detector(df)
+            if result is None: continue
+            found.append(result)
+            s = result['strength']
+            if result['direction'] == 'LONG': long_votes += s
+            elif result['direction'] == 'SHORT': short_votes += s
+        except Exception:
+            continue
+    return {'long_votes': long_votes, 'short_votes': short_votes, 'found': found}
 
 # ==================== ДАННЫЕ ====================
 async def fetch_market_data_async(symbol, timeframe, limit=300):
@@ -838,7 +1238,8 @@ def compute_advanced_indicators(df):
         'patterns': patterns,
         'pivots': calculate_pivot_points(df),
         'volume_score': volume_analysis(df),
-        'session': get_session(datetime.now(timezone.utc))
+        'session': get_session(datetime.now(timezone.utc)),
+        '_df_for_patterns': df
     }
 
 def get_weighted_signal(indicators, timeframe='1h'):
@@ -1011,6 +1412,19 @@ def get_weighted_signal(indicators, timeframe='1h'):
         reasons.append("Лондонская сессия")
     elif indicators['session'] == "NEW_YORK":
         reasons.append("Нью-Йоркская сессия")
+
+    # ==================== 30 ДОПОЛНИТЕЛЬНЫХ ПАТТЕРНОВ ====================
+    _df = indicators.get('_df_for_patterns')
+    if _df is not None and len(_df) >= 20:
+        try:
+            pr = detect_all_patterns(_df)
+            vl += pr['long_votes']
+            vs += pr['short_votes']
+            for pat in pr['found']:
+                reasons.append(f"📐 {pat['name']} (+{pat['strength']})")
+        except Exception as e:
+            logger.warning(f"detect_all_patterns error: {e}")
+
     if vl > vs and vl >= 5:
         signal = 'LONG'
         final_reason = f"Бычий перевес ({vl:.1f} vs {vs:.1f}). " + ", ".join(reasons)
@@ -1331,7 +1745,7 @@ async def send_signal_result(update, context, result, asset, duration, icon):
     except Exception as e:
         logger.debug(f"delete failed: {e}")
     await update.effective_chat.send_photo(photo=image_url, caption=msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
-    
+
 # ==================== ОЦЕНКА ====================
 async def handle_rating(update, context, result_type):
     query = update.callback_query
@@ -1348,7 +1762,6 @@ async def handle_rating(update, context, result_type):
     if row['result'] is not None:
         await query.answer("Вы уже оценили этот сигнал 👍", show_alert=True)
         return
-    # Проверка времени — только для WIN и LOSS. Для SKIP не проверяем.
     if result_type in ('WIN', 'LOSS'):
         now = datetime.now(timezone.utc)
         check_at = row['check_at']
@@ -1374,7 +1787,7 @@ async def handle_rating(update, context, result_type):
         await query.answer("Убыток записан. В следующий раз повезёт! 💪", show_alert=True)
     else:
         await query.answer("Спасибо, пропуск учтён 😚", show_alert=True)
-        
+
 async def rate_win(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await handle_rating(update, context, 'WIN')
 
